@@ -17,6 +17,7 @@ import {
 import { useNativeCapture } from "./hooks/useNativeCapture.js";
 import type { CaptureSource } from "./hooks/useNativeCapture.js";
 import { SourcePicker } from "./components/SourcePicker.js";
+import { useScreenPreview } from "./hooks/useScreenPreview.js";
 
 const API_BASE = "http://localhost:3001"; // TODO: make configurable
 

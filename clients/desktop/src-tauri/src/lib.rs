@@ -161,7 +161,7 @@ fn open_screen_permission_settings() {
     }
 }
 
-/// List all available capture sources (monitors + windows).
+/// List available capture sources (monitors + windows).
 #[tauri::command]
 fn list_capture_sources() -> Result<CaptureSourceList, String> {
     use xcap::{Monitor, Window};
@@ -182,8 +182,9 @@ fn list_capture_sources() -> Result<CaptureSourceList, String> {
         })
         .collect();
 
+    // Window enumeration can fail on some platforms — treat as empty list, not error
     let windows: Vec<WindowInfo> = Window::all()
-        .map_err(|e| format!("Failed to list windows: {e}"))?
+        .unwrap_or_default()
         .into_iter()
         .filter_map(|w| {
             let title = w.title().ok().unwrap_or_default();
@@ -191,7 +192,7 @@ fn list_capture_sources() -> Result<CaptureSourceList, String> {
             let width = w.width().ok()?;
             let height = w.height().ok()?;
             // Filter out tiny/invisible windows and our own app
-            if width < 100 || height < 100 { return None; }
+            if width < 50 || height < 50 { return None; }
             if title.is_empty() && app_name.is_empty() { return None; }
             if app_name == "Collapse" { return None; }
             Some(WindowInfo {
