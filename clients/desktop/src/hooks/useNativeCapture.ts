@@ -1,7 +1,11 @@
 import { useCallback, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import type { CaptureResult } from "@collapse/react";
 import { SCREENSHOT_INTERVAL_MS, MAX_WIDTH, MAX_HEIGHT, JPEG_QUALITY } from "@collapse/shared";
+
+export interface CaptureSource {
+  type: "monitor" | "window";
+  id: number;
+}
 
 interface NativeCaptureResult {
   base64: string;
@@ -24,7 +28,11 @@ interface ConfirmResult {
  *
  * Replaces useScreenCapture + useUploader from @collapse/react.
  */
-export function useNativeCapture(token: string, apiBaseUrl: string) {
+export function useNativeCapture(
+  token: string,
+  apiBaseUrl: string,
+  source: CaptureSource,
+) {
   const [isCapturing, setIsCapturing] = useState(false);
   const [trackedSeconds, setTrackedSeconds] = useState(0);
   const [lastScreenshotUrl, setLastScreenshotUrl] = useState<string | null>(null);
@@ -32,6 +40,8 @@ export function useNativeCapture(token: string, apiBaseUrl: string) {
   const [error, setError] = useState<string | null>(null);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const configuredRef = useRef(false);
+  const sourceRef = useRef(source);
+  sourceRef.current = source;
 
   const configure = useCallback(async () => {
     if (configuredRef.current) return;
@@ -42,6 +52,7 @@ export function useNativeCapture(token: string, apiBaseUrl: string) {
   const captureOnce = useCallback(async () => {
     try {
       const result = await invoke<ConfirmResult>("capture_and_upload", {
+        source: sourceRef.current,
         maxWidth: MAX_WIDTH,
         maxHeight: MAX_HEIGHT,
         jpegQuality: Math.round(JPEG_QUALITY * 100),
@@ -51,9 +62,10 @@ export function useNativeCapture(token: string, apiBaseUrl: string) {
       setScreenshotCount((c) => c + 1);
       setError(null);
 
-      // Also get the screenshot for preview
+      // Also get the screenshot for preview (smaller for perf)
       try {
         const preview = await invoke<NativeCaptureResult>("take_screenshot", {
+          source: sourceRef.current,
           maxWidth: 480,
           maxHeight: 270,
           jpegQuality: 60,

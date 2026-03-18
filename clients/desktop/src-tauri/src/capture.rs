@@ -1,30 +1,38 @@
-use crate::CaptureResult;
+use crate::{CaptureResult, CaptureSource};
 use image::codecs::jpeg::JpegEncoder;
 use image::DynamicImage;
 use std::io::Cursor;
-use xcap::Monitor;
+use xcap::{Monitor, Window};
 
-/// Capture the primary monitor, scale to fit within max dimensions, encode as JPEG.
+/// Capture a specific source (monitor or window), scale to fit, encode as JPEG.
 pub fn take_screenshot(
+    source: CaptureSource,
     max_width: u32,
     max_height: u32,
     jpeg_quality: u8,
 ) -> Result<CaptureResult, String> {
-    // Get primary monitor
-    let monitors = Monitor::all().map_err(|e| format!("Failed to enumerate monitors: {e}"))?;
-    let monitor = monitors
-        .into_iter()
-        .find(|m| m.is_primary().unwrap_or(false))
-        .or_else(|| {
-            // Fallback: first monitor
-            Monitor::all().ok().and_then(|m| m.into_iter().next())
-        })
-        .ok_or("No monitors found")?;
-
-    // Capture screen
-    let img = monitor
-        .capture_image()
-        .map_err(|e| format!("Screen capture failed: {e}"))?;
+    let img = match source {
+        CaptureSource::Monitor { id } => {
+            let monitor = Monitor::all()
+                .map_err(|e| format!("Failed to enumerate monitors: {e}"))?
+                .into_iter()
+                .find(|m| m.id().ok() == Some(id))
+                .ok_or_else(|| format!("Monitor with id {id} not found"))?;
+            monitor
+                .capture_image()
+                .map_err(|e| format!("Screen capture failed: {e}"))?
+        }
+        CaptureSource::Window { id } => {
+            let window = Window::all()
+                .map_err(|e| format!("Failed to enumerate windows: {e}"))?
+                .into_iter()
+                .find(|w| w.id().ok() == Some(id))
+                .ok_or_else(|| format!("Window with id {id} not found"))?;
+            window
+                .capture_image()
+                .map_err(|e| format!("Window capture failed: {e}"))?
+        }
+    };
 
     let mut dynamic = DynamicImage::ImageRgba8(img);
 
@@ -53,7 +61,6 @@ pub fn take_screenshot(
     let jpeg_bytes = jpeg_buf.into_inner();
     let size_bytes = jpeg_bytes.len();
 
-    // Base64 encode for transfer to frontend
     use base64::Engine;
     let base64 = base64::engine::general_purpose::STANDARD.encode(&jpeg_bytes);
 

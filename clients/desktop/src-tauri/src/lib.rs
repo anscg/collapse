@@ -2,7 +2,14 @@ mod capture;
 
 use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
-use tauri::State;
+use tauri::{Emitter, State};
+use tauri_plugin_deep_link::DeepLinkExt;
+
+#[cfg(target_os = "macos")]
+extern "C" {
+    fn CGPreflightScreenCaptureAccess() -> bool;
+    fn CGRequestScreenCaptureAccess() -> bool;
+}
 
 /// App state shared across commands.
 pub struct AppState {
@@ -22,6 +29,46 @@ pub struct CaptureResult {
     pub width: u32,
     pub height: u32,
     pub size_bytes: usize,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum CaptureSource {
+    #[serde(rename = "monitor")]
+    Monitor { id: u32 },
+    #[serde(rename = "window")]
+    Window { id: u32 },
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MonitorInfo {
+    pub id: u32,
+    pub name: String,
+    pub width: u32,
+    pub height: u32,
+    pub is_primary: bool,
+    pub is_builtin: bool,
+    pub scale_factor: f32,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WindowInfo {
+    pub id: u32,
+    pub app_name: String,
+    pub title: String,
+    pub width: u32,
+    pub height: u32,
+    pub is_minimized: bool,
+    pub is_focused: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CaptureSourceList {
+    pub monitors: Vec<MonitorInfo>,
+    pub windows: Vec<WindowInfo>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -47,6 +94,98 @@ pub struct ConfirmResponse {
     pub next_expected_at: String,
 }
 
+/// Check if screen recording permission is granted.
+/// Returns "granted", "denied", or "unknown" (non-macOS platforms always return "granted").
+#[tauri::command]
+fn check_screen_permission() -> String {
+    #[cfg(target_os = "macos")]
+    {
+        // CGPreflightScreenCaptureAccess returns true if permission is already granted
+        let granted: bool = unsafe { CGPreflightScreenCaptureAccess() };
+        if granted { "granted".into() } else { "denied".into() }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        "granted".into()
+    }
+}
+
+/// Request screen recording permission (macOS only).
+/// On macOS 10.15+, this triggers the system prompt if permission hasn't been decided yet.
+/// Returns true if permission was granted.
+#[tauri::command]
+fn request_screen_permission() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        unsafe { CGRequestScreenCaptureAccess() }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        true
+    }
+}
+
+/// Open the system Screen Recording preferences pane (macOS only).
+#[tauri::command]
+fn open_screen_permission_settings() {
+    #[cfg(target_os = "macos")]
+    {
+        use std::process::Command;
+        // Opens System Settings > Privacy & Security > Screen Recording
+        let _ = Command::new("open")
+            .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")
+            .spawn();
+    }
+}
+
+/// List all available capture sources (monitors + windows).
+#[tauri::command]
+fn list_capture_sources() -> Result<CaptureSourceList, String> {
+    use xcap::{Monitor, Window};
+
+    let monitors: Vec<MonitorInfo> = Monitor::all()
+        .map_err(|e| format!("Failed to list monitors: {e}"))?
+        .into_iter()
+        .filter_map(|m| {
+            Some(MonitorInfo {
+                id: m.id().ok()?,
+                name: m.friendly_name().or_else(|_| m.name()).unwrap_or_default(),
+                width: m.width().ok()?,
+                height: m.height().ok()?,
+                is_primary: m.is_primary().unwrap_or(false),
+                is_builtin: m.is_builtin().unwrap_or(false),
+                scale_factor: m.scale_factor().unwrap_or(1.0),
+            })
+        })
+        .collect();
+
+    let windows: Vec<WindowInfo> = Window::all()
+        .map_err(|e| format!("Failed to list windows: {e}"))?
+        .into_iter()
+        .filter_map(|w| {
+            let title = w.title().ok().unwrap_or_default();
+            let app_name = w.app_name().ok().unwrap_or_default();
+            let width = w.width().ok()?;
+            let height = w.height().ok()?;
+            // Filter out tiny/invisible windows and our own app
+            if width < 100 || height < 100 { return None; }
+            if title.is_empty() && app_name.is_empty() { return None; }
+            if app_name == "Collapse" { return None; }
+            Some(WindowInfo {
+                id: w.id().ok()?,
+                app_name,
+                title,
+                width,
+                height,
+                is_minimized: w.is_minimized().unwrap_or(false),
+                is_focused: w.is_focused().unwrap_or(false),
+            })
+        })
+        .collect();
+
+    Ok(CaptureSourceList { monitors, windows })
+}
+
 /// Initialize the session config so Rust knows where the server is.
 #[tauri::command]
 fn configure(token: String, api_base_url: String, state: State<'_, AppState>) -> Result<(), String> {
@@ -55,15 +194,21 @@ fn configure(token: String, api_base_url: String, state: State<'_, AppState>) ->
     Ok(())
 }
 
-/// Take a native screenshot of the primary monitor, encode as JPEG, return base64.
+/// Take a native screenshot, encode as JPEG, return base64.
 #[tauri::command]
-fn take_screenshot(max_width: u32, max_height: u32, jpeg_quality: u8) -> Result<CaptureResult, String> {
-    capture::take_screenshot(max_width, max_height, jpeg_quality)
+fn take_screenshot(
+    source: CaptureSource,
+    max_width: u32,
+    max_height: u32,
+    jpeg_quality: u8,
+) -> Result<CaptureResult, String> {
+    capture::take_screenshot(source, max_width, max_height, jpeg_quality)
 }
 
 /// Full capture-upload-confirm pipeline in Rust (no browser CORS issues).
 #[tauri::command]
 async fn capture_and_upload(
+    source: CaptureSource,
     max_width: u32,
     max_height: u32,
     jpeg_quality: u8,
@@ -75,7 +220,7 @@ async fn capture_and_upload(
     };
 
     // Step 1: Native screenshot
-    let screenshot = capture::take_screenshot(max_width, max_height, jpeg_quality)?;
+    let screenshot = capture::take_screenshot(source, max_width, max_height, jpeg_quality)?;
     let jpeg_bytes = base64_decode(&screenshot.base64)?;
 
     // Step 2: Get presigned URL from server
@@ -144,10 +289,27 @@ pub fn run() {
             config: Mutex::new(None),
         })
         .invoke_handler(tauri::generate_handler![
+            check_screen_permission,
+            request_screen_permission,
+            open_screen_permission_settings,
+            list_capture_sources,
             configure,
             take_screenshot,
             capture_and_upload,
         ])
+        .setup(|app| {
+            // Check if the app was launched via a deep link (cold start)
+            if let Ok(Some(urls)) = app.deep_link().get_current() {
+                let url_strings: Vec<String> = urls.into_iter().map(|u| u.to_string()).collect();
+                let handle = app.handle().clone();
+                // Emit the deep link URLs to the frontend after window is ready
+                tauri::async_runtime::spawn(async move {
+                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                    let _ = handle.emit("deep-link://new-url", url_strings);
+                });
+            }
+            Ok(())
+        })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { onOpenUrl } from "@tauri-apps/plugin-deep-link";
+import { listen } from "@tauri-apps/api/event";
+import { invoke } from "@tauri-apps/api/core";
 import {
   CollapseProvider,
   useSession,
@@ -49,6 +51,97 @@ function getInitialToken(): string {
   if (stored) return stored;
 
   return "";
+}
+
+type PermissionStatus = "checking" | "granted" | "denied";
+
+function PermissionScreen({ onGranted }: { onGranted: () => void }) {
+  const [status, setStatus] = useState<PermissionStatus>("checking");
+  const [requested, setRequested] = useState(false);
+
+  const checkPermission = useCallback(async () => {
+    const result = await invoke<string>("check_screen_permission");
+    if (result === "granted") {
+      setStatus("granted");
+      onGranted();
+    } else {
+      setStatus("denied");
+    }
+  }, [onGranted]);
+
+  // Check on mount
+  useEffect(() => { checkPermission(); }, [checkPermission]);
+
+  // Poll every 2s after user has been sent to settings (they need to toggle it there)
+  useEffect(() => {
+    if (status !== "denied" || !requested) return;
+    const interval = setInterval(checkPermission, 2000);
+    return () => clearInterval(interval);
+  }, [status, requested, checkPermission]);
+
+  const handleRequest = useCallback(async () => {
+    const granted = await invoke<boolean>("request_screen_permission");
+    if (granted) {
+      setStatus("granted");
+      onGranted();
+    } else {
+      setRequested(true);
+    }
+  }, [onGranted]);
+
+  const handleOpenSettings = useCallback(async () => {
+    await invoke("open_screen_permission_settings");
+    setRequested(true);
+  }, []);
+
+  if (status === "checking") {
+    return (
+      <div style={styles.center}>
+        <p style={styles.text}>Checking screen recording permission...</p>
+      </div>
+    );
+  }
+
+  return (
+    <div style={styles.center}>
+      <div style={styles.permissionCard}>
+        <div style={styles.permissionIcon}>
+          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="2" y="3" width="20" height="14" rx="2" ry="2" />
+            <line x1="8" y1="21" x2="16" y2="21" />
+            <line x1="12" y1="17" x2="12" y2="21" />
+          </svg>
+        </div>
+        <h2 style={styles.permissionHeading}>Screen Recording Permission</h2>
+        <p style={styles.permissionText}>
+          Collapse needs screen recording access to capture screenshots of your work.
+          Your screen is captured locally and only periodic screenshots are uploaded.
+        </p>
+
+        {!requested ? (
+          <button style={styles.permissionBtn} onClick={handleRequest}>
+            Grant Permission
+          </button>
+        ) : (
+          <>
+            <p style={{ ...styles.permissionText, color: "#f59e0b", marginBottom: 12 }}>
+              Please enable "Collapse" in System Settings, then return here.
+              This page will update automatically.
+            </p>
+            <button style={styles.permissionBtn} onClick={handleOpenSettings}>
+              Open System Settings
+            </button>
+            <button
+              style={{ ...styles.permissionBtnSecondary, marginTop: 8 }}
+              onClick={checkPermission}
+            >
+              Check Again
+            </button>
+          </>
+        )}
+      </div>
+    </div>
+  );
 }
 
 function WaitingForToken({ onToken }: { onToken: (t: string) => void }) {
@@ -179,10 +272,12 @@ function DesktopRecorder({ token }: { token: string }) {
 
 export function App() {
   const [token, setToken] = useState(getInitialToken);
+  const [permissionGranted, setPermissionGranted] = useState(false);
 
-  // Listen for deep links on mount (handles app launch via deep link)
+  // Listen for deep links — both the plugin event (warm start) and
+  // the Rust-emitted event (cold start, where the app was launched by the URL)
   useEffect(() => {
-    const unlisten = onOpenUrl((urls) => {
+    const handleUrls = (urls: string[]) => {
       for (const url of urls) {
         const t = extractToken(url);
         if (t) {
@@ -191,14 +286,33 @@ export function App() {
           return;
         }
       }
+    };
+
+    // Plugin listener (app already running, new deep link comes in)
+    const unlistenPlugin = onOpenUrl(handleUrls);
+
+    // Rust-side listener (app launched by deep link — emitted from setup())
+    const unlistenRust = listen<string[]>("deep-link://new-url", (event) => {
+      handleUrls(event.payload);
     });
-    return () => { unlisten.then((fn) => fn()); };
+
+    return () => {
+      unlistenPlugin.then((fn) => fn());
+      unlistenRust.then((fn) => fn());
+    };
   }, []);
 
+  // Step 1: Check/request screen recording permission
+  if (!permissionGranted) {
+    return <PermissionScreen onGranted={() => setPermissionGranted(true)} />;
+  }
+
+  // Step 2: Wait for a session token
   if (!token) {
     return <WaitingForToken onToken={setToken} />;
   }
 
+  // Step 3: Record
   return (
     <CollapseProvider token={token} apiBaseUrl={API_BASE}>
       <DesktopRecorder token={token} />
@@ -252,4 +366,25 @@ const styles: Record<string, React.CSSProperties> = {
     animation: "pulse 1.5s ease-in-out infinite",
   },
   recordingText: { fontSize: 13, fontWeight: 600, color: "#ef4444", marginRight: 6 },
+  permissionCard: {
+    maxWidth: 360, padding: 32, background: "#1a1a1a", borderRadius: 16,
+    border: "1px solid #333", textAlign: "center" as const,
+  },
+  permissionIcon: { marginBottom: 16 },
+  permissionHeading: {
+    fontSize: 18, fontWeight: 700, color: "#fff", marginBottom: 12,
+  },
+  permissionText: {
+    fontSize: 13, color: "#999", lineHeight: 1.6, marginBottom: 20,
+  },
+  permissionBtn: {
+    width: "100%", padding: "12px 24px", fontSize: 14, fontWeight: 600,
+    background: "#3b82f6", color: "#fff", border: "none", borderRadius: 8,
+    cursor: "pointer",
+  },
+  permissionBtnSecondary: {
+    width: "100%", padding: "10px 24px", fontSize: 13, fontWeight: 500,
+    background: "transparent", color: "#888", border: "1px solid #444",
+    borderRadius: 8, cursor: "pointer",
+  },
 };
