@@ -4,138 +4,180 @@ import { db, schema } from "../db/index.js";
 import { requireApiKey } from "../middleware/apiKey.js";
 import { boss, COMPILE_JOB } from "../lib/queue.js";
 
+// ── Shared schema fragments ─────────────────────────────────
+
+const sessionIdParamSchema = {
+  type: "object" as const,
+  properties: {
+    sessionId: { type: "string" as const, format: "uuid" },
+  },
+  required: ["sessionId"] as const,
+};
+
 export async function internalRoutes(app: FastifyInstance) {
   app.addHook("onRequest", requireApiKey);
 
   // Create a new session
   app.post<{
     Body: { metadata?: Record<string, unknown> };
-  }>("/api/internal/sessions", async (request, reply) => {
-    const { metadata } = request.body || {};
+  }>(
+    "/api/internal/sessions",
+    {
+      schema: {
+        body: {
+          type: "object" as const,
+          properties: {
+            metadata: { type: "object" as const },
+          },
+          additionalProperties: false,
+        },
+      },
+    },
+    async (request, reply) => {
+      const { metadata } = request.body || {};
 
-    const [session] = await db
-      .insert(schema.sessions)
-      .values({ metadata: metadata ?? {} })
-      .returning();
+      const [session] = await db
+        .insert(schema.sessions)
+        .values({ metadata: metadata ?? {} })
+        .returning();
 
-    const baseUrl = process.env.BASE_URL || "http://localhost:3000";
+      const baseUrl = process.env.BASE_URL || "http://localhost:3000";
 
-    return reply.code(201).send({
-      token: session.token,
-      sessionId: session.id,
-      sessionUrl: `${baseUrl}/session?token=${session.token}`,
-    });
-  });
+      return reply.code(201).send({
+        token: session.token,
+        sessionId: session.id,
+        sessionUrl: `${baseUrl}/session?token=${session.token}`,
+      });
+    },
+  );
 
   // Get session details (includes token)
   app.get<{
     Params: { sessionId: string };
-  }>("/api/internal/sessions/:sessionId", async (request, reply) => {
-    const { sessionId } = request.params;
+  }>(
+    "/api/internal/sessions/:sessionId",
+    {
+      schema: { params: sessionIdParamSchema },
+    },
+    async (request, reply) => {
+      const { sessionId } = request.params;
 
-    const session = await db.query.sessions.findFirst({
-      where: eq(schema.sessions.id, sessionId),
-    });
+      const session = await db.query.sessions.findFirst({
+        where: eq(schema.sessions.id, sessionId),
+      });
 
-    if (!session) {
-      return reply.code(404).send({ error: "Session not found" });
-    }
+      if (!session) {
+        return reply.code(404).send({ error: "Session not found" });
+      }
 
-    const [{ count }] = await db
-      .select({
-        count: sql<number>`count(distinct ${schema.screenshots.minuteBucket})`,
-      })
-      .from(schema.screenshots)
-      .where(
-        and(
-          eq(schema.screenshots.sessionId, sessionId),
-          eq(schema.screenshots.confirmed, true),
-        ),
-      );
+      const [{ count }] = await db
+        .select({
+          count: sql<number>`count(distinct ${schema.screenshots.minuteBucket})`,
+        })
+        .from(schema.screenshots)
+        .where(
+          and(
+            eq(schema.screenshots.sessionId, sessionId),
+            eq(schema.screenshots.confirmed, true),
+          ),
+        );
 
-    return {
-      session,
-      trackedSeconds: Number(count) * 60,
-      screenshotCount: Number(count),
-    };
-  });
+      return {
+        session,
+        trackedSeconds: Number(count) * 60,
+        screenshotCount: Number(count),
+      };
+    },
+  );
 
   // Force-stop a session
   app.post<{
     Params: { sessionId: string };
-  }>("/api/internal/sessions/:sessionId/stop", async (request, reply) => {
-    const { sessionId } = request.params;
+  }>(
+    "/api/internal/sessions/:sessionId/stop",
+    {
+      schema: { params: sessionIdParamSchema },
+    },
+    async (request, reply) => {
+      const { sessionId } = request.params;
 
-    const session = await db.query.sessions.findFirst({
-      where: eq(schema.sessions.id, sessionId),
-    });
+      const session = await db.query.sessions.findFirst({
+        where: eq(schema.sessions.id, sessionId),
+      });
 
-    if (!session) {
-      return reply.code(404).send({ error: "Session not found" });
-    }
+      if (!session) {
+        return reply.code(404).send({ error: "Session not found" });
+      }
 
-    if (
-      session.status === "stopped" ||
-      session.status === "compiling" ||
-      session.status === "complete"
-    ) {
-      return reply
-        .code(409)
-        .send({ error: `Session already ${session.status}` });
-    }
+      if (
+        session.status === "stopped" ||
+        session.status === "compiling" ||
+        session.status === "complete"
+      ) {
+        return reply
+          .code(409)
+          .send({ error: `Session already ${session.status}` });
+      }
 
-    // Accumulate active time if session was active
-    let totalActiveSeconds = session.totalActiveSeconds;
-    if (session.status === "active" && session.startedAt) {
-      const activeFrom =
-        session.resumedAt || session.startedAt;
-      totalActiveSeconds += Math.floor(
-        (Date.now() - activeFrom.getTime()) / 1000,
-      );
-    }
+      // Accumulate active time if session was active
+      let totalActiveSeconds = session.totalActiveSeconds;
+      if (session.status === "active" && session.startedAt) {
+        const activeFrom =
+          session.resumedAt || session.startedAt;
+        totalActiveSeconds += Math.floor(
+          (Date.now() - activeFrom.getTime()) / 1000,
+        );
+      }
 
-    await db
-      .update(schema.sessions)
-      .set({
-        status: "stopped",
-        stoppedAt: new Date(),
-        totalActiveSeconds,
-        updatedAt: new Date(),
-      })
-      .where(eq(schema.sessions.id, sessionId));
+      await db
+        .update(schema.sessions)
+        .set({
+          status: "stopped",
+          stoppedAt: new Date(),
+          totalActiveSeconds,
+          updatedAt: new Date(),
+        })
+        .where(eq(schema.sessions.id, sessionId));
 
-    await boss.send(COMPILE_JOB, { sessionId });
+      await boss.send(COMPILE_JOB, { sessionId });
 
-    return { status: "stopped" };
-  });
+      return { status: "stopped" };
+    },
+  );
 
   // Re-trigger compilation for failed sessions
   app.post<{
     Params: { sessionId: string };
-  }>("/api/internal/sessions/:sessionId/recompile", async (request, reply) => {
-    const { sessionId } = request.params;
+  }>(
+    "/api/internal/sessions/:sessionId/recompile",
+    {
+      schema: { params: sessionIdParamSchema },
+    },
+    async (request, reply) => {
+      const { sessionId } = request.params;
 
-    const session = await db.query.sessions.findFirst({
-      where: eq(schema.sessions.id, sessionId),
-    });
+      const session = await db.query.sessions.findFirst({
+        where: eq(schema.sessions.id, sessionId),
+      });
 
-    if (!session) {
-      return reply.code(404).send({ error: "Session not found" });
-    }
+      if (!session) {
+        return reply.code(404).send({ error: "Session not found" });
+      }
 
-    if (session.status !== "failed") {
-      return reply
-        .code(409)
-        .send({ error: "Only failed sessions can be recompiled" });
-    }
+      if (session.status !== "failed") {
+        return reply
+          .code(409)
+          .send({ error: "Only failed sessions can be recompiled" });
+      }
 
-    await db
-      .update(schema.sessions)
-      .set({ status: "compiling", updatedAt: new Date() })
-      .where(eq(schema.sessions.id, sessionId));
+      await db
+        .update(schema.sessions)
+        .set({ status: "compiling", updatedAt: new Date() })
+        .where(eq(schema.sessions.id, sessionId));
 
-    await boss.send(COMPILE_JOB, { sessionId });
+      await boss.send(COMPILE_JOB, { sessionId });
 
-    return { status: "compiling" };
-  });
+      return { status: "compiling" };
+    },
+  );
 }

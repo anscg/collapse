@@ -95,14 +95,37 @@ pub struct ConfirmResponse {
 }
 
 /// Check if screen recording permission is granted.
-/// Returns "granted", "denied", or "unknown" (non-macOS platforms always return "granted").
+/// Returns "granted" or "denied". Non-macOS platforms always return "granted".
+///
+/// CGPreflightScreenCaptureAccess is unreliable during `tauri dev` because the
+/// debug binary runs under the terminal's identity. As a fallback we attempt an
+/// actual screen capture — if xcap succeeds and returns a non-empty image,
+/// permission is effectively granted regardless of what the CG API says.
 #[tauri::command]
 fn check_screen_permission() -> String {
     #[cfg(target_os = "macos")]
     {
-        // CGPreflightScreenCaptureAccess returns true if permission is already granted
-        let granted: bool = unsafe { CGPreflightScreenCaptureAccess() };
-        if granted { "granted".into() } else { "denied".into() }
+        // Fast path: CG API says yes
+        if unsafe { CGPreflightScreenCaptureAccess() } {
+            return "granted".into();
+        }
+
+        // Fallback: try an actual capture. If it works, permission is granted
+        // even though CGPreflight returned false (common in dev builds).
+        if let Ok(monitors) = xcap::Monitor::all() {
+            if let Some(m) = monitors.into_iter().next() {
+                if let Ok(img) = m.capture_image() {
+                    // A denied capture returns a fully-transparent/black image.
+                    // Check if any pixel has non-zero RGB values.
+                    let has_content = img.pixels().any(|p| p.0[0] > 0 || p.0[1] > 0 || p.0[2] > 0);
+                    if has_content {
+                        return "granted".into();
+                    }
+                }
+            }
+        }
+
+        "denied".into()
     }
     #[cfg(not(target_os = "macos"))]
     {

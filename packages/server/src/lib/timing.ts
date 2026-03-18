@@ -43,6 +43,39 @@ export function checkRateLimit(sessionId: string): {
 }
 
 /**
+ * Generic in-memory rate limiter.
+ * Tracks requests per 60-second sliding window under a namespaced key.
+ */
+const genericWindows = new Map<
+  string,
+  { count: number; windowStart: number }
+>();
+
+export function checkGenericRateLimit(
+  namespace: string,
+  key: string,
+  maxPerMinute: number,
+): { allowed: boolean; retryAfterMs?: number } {
+  const compositeKey = `${namespace}:${key}`;
+  const now = Date.now();
+  const windowMs = 60_000;
+  const entry = genericWindows.get(compositeKey);
+
+  if (!entry || now - entry.windowStart >= windowMs) {
+    genericWindows.set(compositeKey, { count: 1, windowStart: now });
+    return { allowed: true };
+  }
+
+  if (entry.count >= maxPerMinute) {
+    const retryAfterMs = windowMs - (now - entry.windowStart);
+    return { allowed: false, retryAfterMs };
+  }
+
+  entry.count++;
+  return { allowed: true };
+}
+
+/**
  * Clean up stale rate limit entries (call periodically).
  */
 export function cleanupRateLimits() {
@@ -50,6 +83,11 @@ export function cleanupRateLimits() {
   for (const [key, entry] of windows) {
     if (now - entry.windowStart > 120_000) {
       windows.delete(key);
+    }
+  }
+  for (const [key, entry] of genericWindows) {
+    if (now - entry.windowStart > 120_000) {
+      genericWindows.delete(key);
     }
   }
 }

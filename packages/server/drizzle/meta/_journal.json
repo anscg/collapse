@@ -8,6 +8,13 @@
       "when": 1773859812027,
       "tag": "0000_worthless_nomad",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1773874322352,
+      "tag": "0001_fine_black_panther",
+      "breakpoints": true
     }
   ]
 }

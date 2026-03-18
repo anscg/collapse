@@ -16,9 +16,10 @@ import * as schema from "./schema.js";
 
 const execFileAsync = promisify(execFile);
 
-const DATABASE_URL =
-  process.env.DATABASE_URL ||
-  "postgresql://collapse:collapse@localhost:5433/collapse";
+const DATABASE_URL = process.env.DATABASE_URL;
+if (!DATABASE_URL) {
+  throw new Error("DATABASE_URL environment variable must be set");
+}
 
 const pool = new pg.Pool({ connectionString: DATABASE_URL });
 const db = drizzle(pool, { schema });
@@ -41,6 +42,8 @@ const R2_PUBLIC_DOMAIN = process.env.R2_PUBLIC_DOMAIN || "";
 export async function compileTimelapse(sessionId: string): Promise<{
   videoUrl: string;
   videoR2Key: string;
+  thumbnailUrl: string;
+  thumbnailR2Key: string;
 }> {
   const session = await db.query.sessions.findFirst({
     where: eq(schema.sessions.id, sessionId),
@@ -83,7 +86,7 @@ export async function compileTimelapse(sessionId: string): Promise<{
         .update(schema.sessions)
         .set({ status: "complete", updatedAt: new Date() })
         .where(eq(schema.sessions.id, sessionId));
-      return { videoUrl: "", videoR2Key: "" };
+      return { videoUrl: "", videoR2Key: "", thumbnailUrl: "", thumbnailR2Key: "" };
     }
 
     // Mark sampled screenshots
@@ -124,7 +127,7 @@ export async function compileTimelapse(sessionId: string): Promise<{
       "-vf", "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2",
       "-y",
       outputPath,
-    ]);
+    ], { timeout: 600_000 });
 
     // Step 4: Verify output
     // Check file exists and size > 0
@@ -139,7 +142,7 @@ export async function compileTimelapse(sessionId: string): Promise<{
       "-show_entries", "stream=nb_read_frames",
       "-of", "csv=p=0",
       outputPath,
-    ]);
+    ], { timeout: 30_000 });
 
     const frameCount = parseInt(frameCountStr.trim(), 10);
     const expectedFrames = total * 30; // 1 input fps → 30 output fps
@@ -152,6 +155,33 @@ export async function compileTimelapse(sessionId: string): Promise<{
         `Frame count mismatch: expected ~${expectedFrames} (±${tolerance}), got ${frameCount}`,
       );
     }
+
+    // Step 4.5: Extract thumbnail from first frame
+    const thumbnailPath = path.join(tmpDir, "thumbnail.jpg");
+    await execFileAsync("ffmpeg", [
+      "-i", outputPath,
+      "-vframes", "1",
+      "-vf", "scale=480:-1",
+      "-q:v", "5",
+      "-y",
+      thumbnailPath,
+    ], { timeout: 30_000 });
+
+    // Upload thumbnail to R2
+    const thumbnailR2Key = `timelapses/${sessionId}/thumbnail.jpg`;
+    const thumbnailBytes = await fs.readFile(thumbnailPath);
+    await r2Client.send(
+      new PutObjectCommand({
+        Bucket: R2_BUCKET,
+        Key: thumbnailR2Key,
+        Body: thumbnailBytes,
+        ContentType: "image/jpeg",
+      }),
+    );
+
+    const thumbnailUrl = R2_PUBLIC_DOMAIN
+      ? `https://${R2_PUBLIC_DOMAIN}/${thumbnailR2Key}`
+      : thumbnailR2Key;
 
     // Step 5: Upload video to R2
     const videoR2Key = `timelapses/${sessionId}/timelapse.mp4`;
@@ -187,6 +217,8 @@ export async function compileTimelapse(sessionId: string): Promise<{
         status: "complete",
         videoUrl,
         videoR2Key,
+        thumbnailUrl,
+        thumbnailR2Key,
         updatedAt: new Date(),
       })
       .where(eq(schema.sessions.id, sessionId));
@@ -223,7 +255,7 @@ export async function compileTimelapse(sessionId: string): Promise<{
         ),
       );
 
-    return { videoUrl, videoR2Key };
+    return { videoUrl, videoR2Key, thumbnailUrl, thumbnailR2Key };
   } finally {
     // Always clean up temp directory
     await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {});

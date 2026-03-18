@@ -13,6 +13,8 @@ export interface Session {
   totalActiveSeconds: number;
   videoUrl: string | null;
   videoR2Key: string | null;
+  thumbnailUrl: string | null;
+  thumbnailR2Key: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -49,6 +51,10 @@ export interface SessionResponse {
   screenshotCount: number;
   startedAt: string | null;
   totalActiveSeconds: number;
+  createdAt: string;
+  thumbnailUrl: string | null;
+  videoUrl: string | null;
+  metadata: Record<string, unknown>;
 }
 
 export interface UploadUrlResponse {
@@ -97,4 +103,29 @@ export interface StatusResponse {
 
 export interface VideoResponse {
   videoUrl: string;
+}
+
+export interface ThumbnailResponse {
+  thumbnailUrl: string;
+}
+
+export interface SessionSummary {
+  token: string;
+  status: SessionStatus;
+  trackedSeconds: number;
+  screenshotCount: number;
+  startedAt: string | null;
+  createdAt: string;
+  totalActiveSeconds: number;
+  thumbnailUrl: string | null;
+  videoUrl: string | null;
+  metadata: Record<string, unknown>;
+}
+
+export interface BatchSessionsRequest {
+  tokens: string[];
+}
+
+export interface BatchSessionsResponse {
+  sessions: SessionSummary[];
 }

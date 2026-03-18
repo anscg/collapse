@@ -77,6 +77,9 @@ export function createCollapseClient(options: CreateClientOptions): CollapseClie
     },
 
     async uploadToR2(uploadUrl, blob) {
+      if (!uploadUrl.startsWith("https://") && !uploadUrl.startsWith("/")) {
+        throw new Error("Invalid upload URL: must be HTTPS or a relative path.");
+      }
       let res: Response;
       try {
         res = await fetch(uploadUrl, {

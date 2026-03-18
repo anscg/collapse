@@ -15,6 +15,18 @@ const app = Fastify({ logger: true });
 
 await app.register(cors, { origin: true });
 
+// Security headers
+app.addHook("onSend", async (_request, reply) => {
+  reply.header("X-Content-Type-Options", "nosniff");
+  reply.header("X-Frame-Options", "DENY");
+  reply.header("X-XSS-Protection", "0");
+  reply.header("Referrer-Policy", "no-referrer");
+  reply.header(
+    "Strict-Transport-Security",
+    "max-age=31536000; includeSubDomains",
+  );
+});
+
 // Register API routes
 await app.register(internalRoutes);
 await app.register(sessionRoutes);

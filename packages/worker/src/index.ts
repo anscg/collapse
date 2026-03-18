@@ -5,9 +5,10 @@ import { eq } from "drizzle-orm";
 import { compileTimelapse } from "./compile.js";
 import * as schema from "./schema.js";
 
-const DATABASE_URL =
-  process.env.DATABASE_URL ||
-  "postgresql://collapse:collapse@localhost:5433/collapse";
+const DATABASE_URL = process.env.DATABASE_URL;
+if (!DATABASE_URL) {
+  throw new Error("DATABASE_URL environment variable must be set");
+}
 
 const COMPILE_JOB = "compile-timelapse";
 const RETRY_LIMIT = 3;

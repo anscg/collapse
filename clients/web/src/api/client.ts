@@ -54,6 +54,9 @@ export const api = {
   },
 
   async uploadToR2(uploadUrl: string, blob: Blob): Promise<void> {
+    if (!uploadUrl.startsWith("https://") && !uploadUrl.startsWith("/")) {
+      throw new Error("Invalid upload URL: must be HTTPS or a relative path.");
+    }
     let res: Response;
     try {
       res = await fetch(uploadUrl, {

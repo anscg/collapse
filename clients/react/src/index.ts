@@ -15,12 +15,28 @@ export type { ScreenPreviewProps } from "./components/ScreenPreview.js";
 export { ResultView } from "./components/ResultView.js";
 export type { ResultViewProps } from "./components/ResultView.js";
 
+// Gallery components
+export { Gallery } from "./components/Gallery.js";
+export type { GalleryProps } from "./components/Gallery.js";
+export { SessionCard } from "./components/SessionCard.js";
+export type { SessionCardProps } from "./components/SessionCard.js";
+export { SessionDetail } from "./components/SessionDetail.js";
+export type { SessionDetailProps } from "./components/SessionDetail.js";
+
 // Headless hooks
 export { useCollapse } from "./hooks/useCollapse.js";
 export { useScreenCapture } from "./hooks/useScreenCapture.js";
 export { useUploader } from "./hooks/useUploader.js";
 export { useSession } from "./hooks/useSession.js";
 export { useSessionTimer, formatTime } from "./hooks/useSessionTimer.js";
+
+// Gallery hooks
+export { useTokenStore } from "./hooks/useTokenStore.js";
+export type { TokenEntry, UseTokenStore } from "./hooks/useTokenStore.js";
+export { useGallery } from "./hooks/useGallery.js";
+export type { UseGalleryOptions, UseGallery as UseGalleryReturn } from "./hooks/useGallery.js";
+export { useHashRouter } from "./hooks/useHashRouter.js";
+export type { Route } from "./hooks/useHashRouter.js";
 
 // API client (no React dependency)
 export { createCollapseClient } from "./api/client.js";
@@ -42,5 +58,5 @@ export type {
 } from "./types.js";
 
 // Re-export shared types consumers need
-export type { SessionStatus } from "@collapse/shared";
+export type { SessionStatus, SessionSummary } from "@collapse/shared";
 export { SESSION_STATUSES } from "@collapse/shared";

@@ -1,8 +1,9 @@
 import PgBoss from "pg-boss";
 
-const DATABASE_URL =
-  process.env.DATABASE_URL ||
-  "postgresql://collapse:collapse@localhost:5433/collapse";
+const DATABASE_URL = process.env.DATABASE_URL;
+if (!DATABASE_URL) {
+  throw new Error("DATABASE_URL environment variable is required but not set");
+}
 
 export const boss = new PgBoss({
   connectionString: DATABASE_URL,

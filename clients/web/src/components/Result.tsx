@@ -16,7 +16,12 @@ export function Result({ status, trackedSeconds }: ResultProps) {
     if (status === "complete") {
       api
         .getVideo()
-        .then((data) => setVideoUrl(data.videoUrl))
+        .then((data) => {
+          if (data.videoUrl && !data.videoUrl.startsWith("https://")) {
+            throw new Error("Invalid video URL: must be HTTPS.");
+          }
+          setVideoUrl(data.videoUrl);
+        })
         .catch((err) =>
           setError(err instanceof Error ? err.message : "Failed to load video"),
         );

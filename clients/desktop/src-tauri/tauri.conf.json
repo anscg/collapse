@@ -10,7 +10,7 @@
     "beforeBuildCommand": "npm run build"
   },
   "app": {
-    "withGlobalTauri": true,
+    "withGlobalTauri": false,
     "windows": [
       {
         "title": "Collapse",
@@ -22,7 +22,7 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; media-src 'self' blob: https:; connect-src 'self' http://localhost:* https:;"
     }
   },
   "bundle": {

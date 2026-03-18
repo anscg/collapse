@@ -8,6 +8,11 @@ import {
   useSessionTimer,
   StatusBar,
   ResultView,
+  Gallery,
+  SessionDetail,
+  useTokenStore,
+  useGallery,
+  useHashRouter,
 } from "@collapse/react";
 import { useNativeCapture } from "./hooks/useNativeCapture.js";
 import type { CaptureSource } from "./hooks/useNativeCapture.js";
@@ -15,45 +20,33 @@ import { SourcePicker } from "./components/SourcePicker.js";
 
 const API_BASE = "http://localhost:3001"; // TODO: make configurable
 
-/**
- * Extract token from a deep link URL like:
- *   collapse://session?token=abc123
- *   collapse://session/abc123
- */
+// ── Helpers ──────────────────────────────────────────────────
+
+function isValidToken(token: string): boolean {
+  return /^[a-f0-9]{64}$/i.test(token);
+}
+
 function extractToken(url: string): string | null {
   try {
-    // Handle collapse:// scheme — URL constructor needs a valid base
     const normalized = url.replace("collapse://", "https://collapse.local/");
     const parsed = new URL(normalized);
-
-    // Try query param first: collapse://session?token=abc123
     const fromQuery = parsed.searchParams.get("token");
-    if (fromQuery) return fromQuery;
-
-    // Try path: collapse://session/abc123
+    if (fromQuery && isValidToken(fromQuery)) return fromQuery;
     const segments = parsed.pathname.split("/").filter(Boolean);
-    if (segments.length >= 2) return segments[1];
-    if (segments.length === 1 && segments[0] !== "session") return segments[0];
-
+    const candidate =
+      segments.length >= 2
+        ? segments[1]
+        : segments.length === 1 && segments[0] !== "session"
+          ? segments[0]
+          : null;
+    if (candidate && isValidToken(candidate)) return candidate;
     return null;
   } catch {
     return null;
   }
 }
 
-/** Try to get token from multiple sources. */
-function getInitialToken(): string {
-  // 1. URL query param (for dev / direct vite access)
-  const params = new URLSearchParams(window.location.search);
-  const fromUrl = params.get("token");
-  if (fromUrl) return fromUrl;
-
-  // 2. Stored from a previous deep link
-  const stored = sessionStorage.getItem("collapse-token");
-  if (stored) return stored;
-
-  return "";
-}
+// ── Permission Screen ────────────────────────────────────────
 
 type PermissionStatus = "checking" | "granted" | "denied";
 
@@ -71,10 +64,8 @@ function PermissionScreen({ onGranted }: { onGranted: () => void }) {
     }
   }, [onGranted]);
 
-  // Check on mount
   useEffect(() => { checkPermission(); }, [checkPermission]);
 
-  // Poll every 2s after user has been sent to settings (they need to toggle it there)
   useEffect(() => {
     if (status !== "denied" || !requested) return;
     const interval = setInterval(checkPermission, 2000);
@@ -119,7 +110,6 @@ function PermissionScreen({ onGranted }: { onGranted: () => void }) {
           Collapse needs screen recording access to capture screenshots of your work.
           Your screen is captured locally and only periodic screenshots are uploaded.
         </p>
-
         {!requested ? (
           <button style={styles.permissionBtn} onClick={handleRequest}>
             Grant Permission
@@ -146,41 +136,13 @@ function PermissionScreen({ onGranted }: { onGranted: () => void }) {
   );
 }
 
-function WaitingForToken({ onToken }: { onToken: (t: string) => void }) {
-  useEffect(() => {
-    // Listen for deep link events (app already running)
-    const unlisten = onOpenUrl((urls) => {
-      for (const url of urls) {
-        const token = extractToken(url);
-        if (token) {
-          sessionStorage.setItem("collapse-token", token);
-          onToken(token);
-          return;
-        }
-      }
-    });
+// ── Desktop Recorder ─────────────────────────────────────────
 
-    return () => { unlisten.then((fn) => fn()); };
-  }, [onToken]);
-
-  return (
-    <div style={styles.center}>
-      <h2 style={styles.heading}>Collapse</h2>
-      <p style={styles.text}>
-        Waiting for a session link...
-      </p>
-      <p style={{ ...styles.text, marginTop: 12, fontSize: 12, color: "#555" }}>
-        Open a <code style={{ color: "#888" }}>collapse://session?token=...</code> link
-        to start recording.
-      </p>
-    </div>
-  );
-}
-
-function DesktopRecorder({ token, source, onChangeSource }: {
+function DesktopRecorder({ token, source, onChangeSource, onBack }: {
   token: string;
   source: CaptureSource;
   onChangeSource: () => void;
+  onBack: () => void;
 }) {
   const session = useSession();
   const capture = useNativeCapture(token, API_BASE, source);
@@ -223,12 +185,20 @@ function DesktopRecorder({ token, source, onChangeSource }: {
       <div style={styles.center}>
         <h2 style={{ ...styles.heading, color: "#ef4444" }}>Error</h2>
         <p style={styles.text}>{session.error}</p>
+        <button style={{ ...styles.backBtn, marginTop: 12 }} onClick={onBack}>
+          &larr; Gallery
+        </button>
       </div>
     );
   }
 
   if (["stopped", "compiling", "complete", "failed"].includes(session.status)) {
-    return <ResultView status={session.status} trackedSeconds={session.trackedSeconds} />;
+    return (
+      <div style={styles.container}>
+        <button style={styles.backBtn} onClick={onBack}>&larr; Gallery</button>
+        <ResultView status={session.status} trackedSeconds={session.trackedSeconds} />
+      </div>
+    );
   }
 
   const isActive = session.status === "active" || session.status === "pending";
@@ -236,6 +206,7 @@ function DesktopRecorder({ token, source, onChangeSource }: {
 
   return (
     <div style={styles.container}>
+      <button style={styles.backBtn} onClick={onBack}>&larr; Gallery</button>
       <StatusBar
         displaySeconds={displaySeconds}
         screenshotCount={capture.screenshotCount}
@@ -279,65 +250,137 @@ function DesktopRecorder({ token, source, onChangeSource }: {
   );
 }
 
-export function App() {
-  const [token, setToken] = useState(getInitialToken);
-  const [permissionGranted, setPermissionGranted] = useState(false);
+// ── Recording Page (source picker + recorder) ────────────────
+
+function RecordPage({ token, onBack }: { token: string; onBack: () => void }) {
   const [captureSource, setCaptureSource] = useState<CaptureSource | null>(null);
 
-  // Listen for deep links — both the plugin event (warm start) and
-  // the Rust-emitted event (cold start, where the app was launched by the URL)
-  useEffect(() => {
-    const handleUrls = (urls: string[]) => {
-      for (const url of urls) {
-        const t = extractToken(url);
-        if (t) {
-          sessionStorage.setItem("collapse-token", t);
-          setToken(t);
-          return;
-        }
-      }
-    };
-
-    // Plugin listener (app already running, new deep link comes in)
-    const unlistenPlugin = onOpenUrl(handleUrls);
-
-    // Rust-side listener (app launched by deep link — emitted from setup())
-    const unlistenRust = listen<string[]>("deep-link://new-url", (event) => {
-      handleUrls(event.payload);
-    });
-
-    return () => {
-      unlistenPlugin.then((fn) => fn());
-      unlistenRust.then((fn) => fn());
-    };
-  }, []);
-
-  // Step 1: Check/request screen recording permission
-  if (!permissionGranted) {
-    return <PermissionScreen onGranted={() => setPermissionGranted(true)} />;
-  }
-
-  // Step 2: Wait for a session token
-  if (!token) {
-    return <WaitingForToken onToken={setToken} />;
-  }
-
-  // Step 3: Pick capture source
   if (!captureSource) {
-    return <SourcePicker onSelect={setCaptureSource} />;
+    return (
+      <div>
+        <div style={{ maxWidth: 480, margin: "0 auto", padding: "16px 16px 0" }}>
+          <button style={styles.backBtn} onClick={onBack}>&larr; Gallery</button>
+        </div>
+        <SourcePicker onSelect={setCaptureSource} />
+      </div>
+    );
   }
 
-  // Step 4: Record
   return (
     <CollapseProvider token={token} apiBaseUrl={API_BASE}>
       <DesktopRecorder
         token={token}
         source={captureSource}
         onChangeSource={() => setCaptureSource(null)}
+        onBack={onBack}
       />
     </CollapseProvider>
   );
 }
+
+// ── App ──────────────────────────────────────────────────────
+
+export function App() {
+  const [permissionGranted, setPermissionGranted] = useState(false);
+  const { route, navigate } = useHashRouter();
+  const tokenStore = useTokenStore();
+  const gallery = useGallery({
+    apiBaseUrl: API_BASE,
+    tokens: tokenStore.getAllTokenValues(),
+  });
+
+  // Deep link handler — saves token and navigates to record
+  const handleDeepLinkUrls = useCallback(
+    (urls: string[]) => {
+      for (const url of urls) {
+        const token = extractToken(url);
+        if (token) {
+          tokenStore.addToken(token);
+          navigate({ page: "record", token });
+          return;
+        }
+      }
+    },
+    [tokenStore, navigate],
+  );
+
+  useEffect(() => {
+    const unlistenPlugin = onOpenUrl(handleDeepLinkUrls);
+    const unlistenRust = listen<string[]>("deep-link://new-url", (event) => {
+      handleDeepLinkUrls(event.payload);
+    });
+    return () => {
+      unlistenPlugin.then((fn) => fn());
+      unlistenRust.then((fn) => fn());
+    };
+  }, [handleDeepLinkUrls]);
+
+  // Handle ?token= query param (dev mode)
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const token = params.get("token");
+    if (token && isValidToken(token)) {
+      tokenStore.addToken(token);
+      navigate({ page: "record", token });
+    }
+  }, []);
+
+  // Step 1: Permission check (macOS)
+  if (!permissionGranted) {
+    return <PermissionScreen onGranted={() => setPermissionGranted(true)} />;
+  }
+
+  // Step 2: Route
+  switch (route.page) {
+    case "gallery":
+      return (
+        <Gallery
+          sessions={gallery.sessions}
+          loading={gallery.loading}
+          error={gallery.error}
+          onSessionClick={(token) => {
+            const session = gallery.sessions.find((s) => s.token === token);
+            if (session && ["pending", "active", "paused"].includes(session.status)) {
+              navigate({ page: "record", token });
+            } else {
+              navigate({ page: "session", token });
+            }
+          }}
+          onArchive={(token) => {
+            tokenStore.archiveToken(token);
+            gallery.refresh();
+          }}
+          onRefresh={gallery.refresh}
+        />
+      );
+
+    case "record":
+      return (
+        <RecordPage
+          token={route.token}
+          onBack={() => {
+            gallery.refresh();
+            navigate({ page: "gallery" });
+          }}
+        />
+      );
+
+    case "session":
+      return (
+        <SessionDetail
+          token={route.token}
+          apiBaseUrl={API_BASE}
+          onBack={() => navigate({ page: "gallery" })}
+          onArchive={() => {
+            tokenStore.archiveToken(route.token);
+            navigate({ page: "gallery" });
+          }}
+        />
+      );
+  }
+}
+
+// ── Styles ───────────────────────────────────────────────────
 
 const styles: Record<string, React.CSSProperties> = {
   container: { maxWidth: 480, margin: "20px auto", padding: 16 },
@@ -347,6 +390,11 @@ const styles: Record<string, React.CSSProperties> = {
   },
   heading: { fontSize: 20, fontWeight: 700, color: "#fff", marginBottom: 8 },
   text: { fontSize: 14, color: "#888", textAlign: "center" },
+  backBtn: {
+    padding: "6px 12px", fontSize: 13, fontWeight: 500,
+    background: "transparent", color: "#888", border: "1px solid #444",
+    borderRadius: 6, cursor: "pointer", marginBottom: 12,
+  },
   preview: {
     position: "relative", marginBottom: 12, borderRadius: 8,
     overflow: "hidden", background: "#111", border: "1px solid #333",
