@@ -67,7 +67,7 @@ jobs:
           targets: ${{ matrix.rust_targets }}
 
       - name: Rust cache
-        uses: swatinem/rust-cache@9d47f7b6ad368182fc68d43cba93bd7a2f0e46ea # v2.7.8
+        uses: swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           workspaces: "./clients/desktop/src-tauri -> target"
 
@@ -80,7 +80,7 @@ jobs:
           npm run build -w clients/react
 
       - name: Build and release
-        uses: tauri-apps/tauri-action@42bc5477449e498c5e52604e54e7da1a5fd7a19a # v0.5.17
+        uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
