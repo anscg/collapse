@@ -40,10 +40,18 @@ async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
   if (init?.body) {
     headers["Content-Type"] = "application/json";
   }
-  const res = await fetch(url, { ...init, headers: { ...headers, ...(init?.headers as Record<string, string>) } });
+  let res: Response;
+  try {
+    res = await fetch(url, { ...init, headers: { ...headers, ...(init?.headers as Record<string, string>) } });
+  } catch (err) {
+    // Network-level failure (DNS, connection refused, CORS, SSL)
+    // WebKit just says "Load failed" — add the URL for context
+    const msg = err instanceof Error ? err.message : String(err);
+    throw new Error(`Network error fetching ${url}: ${msg}`);
+  }
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    throw new Error(body.error || `HTTP ${res.status}`);
+    throw new Error(body.error || `HTTP ${res.status} from ${url}`);
   }
   return res.json() as Promise<T>;
 }

@@ -55,8 +55,12 @@ function PermissionScreen({ onGranted }: { onGranted: () => void }) {
   const [status, setStatus] = useState<PermissionStatus>("checking");
   const [requested, setRequested] = useState(false);
 
+  dbg(`PermissionScreen render: status=${status}`);
+
   const checkPermission = useCallback(async () => {
+    dbg("PermissionScreen: calling invoke check_screen_permission...");
     const result = await invoke<string>("check_screen_permission");
+    dbg("PermissionScreen: result=" + result);
     if (result === "granted") {
       setStatus("granted");
       onGranted();
@@ -132,6 +136,12 @@ function PermissionScreen({ onGranted }: { onGranted: () => void }) {
             </button>
           </>
         )}
+        <button
+          style={{ ...styles.permissionBtnSecondary, marginTop: 16, fontSize: 11, color: "#666" }}
+          onClick={onGranted}
+        >
+          Skip (proceed anyway)
+        </button>
       </div>
     </div>
   );
@@ -190,8 +200,10 @@ function DesktopRecorder({ token, source, onChangeSource, onBack }: {
   if (session.status === "error") {
     return (
       <div style={styles.center}>
-        <h2 style={{ ...styles.heading, color: "#ef4444" }}>Error</h2>
-        <p style={styles.text}>{session.error}</p>
+        <h2 style={{ ...styles.heading, color: "#ef4444" }}>Session Error</h2>
+        <div style={styles.errorBox}>
+          <pre style={styles.errorDetail}>{session.error}</pre>
+        </div>
         <button style={{ ...styles.backBtn, marginTop: 12 }} onClick={onBack}>
           &larr; Gallery
         </button>
@@ -294,14 +306,21 @@ function RecordPage({ token, onBack }: { token: string; onBack: () => void }) {
 
 // ── App ──────────────────────────────────────────────────────
 
+const dbg = (window as any).__dbg || console.log;
+
 export function App() {
+  dbg("App: render start");
   const [permissionGranted, setPermissionGranted] = useState(false);
+  dbg("App: after useState");
   const { route, navigate } = useHashRouter();
+  dbg("App: after useHashRouter");
   const tokenStore = useTokenStore();
+  dbg("App: after useTokenStore, tokens=" + tokenStore.getAllTokenValues().length);
   const gallery = useGallery({
     apiBaseUrl: API_BASE,
     tokens: tokenStore.getAllTokenValues(),
   });
+  dbg(`App: after useGallery, permissionGranted=${permissionGranted}`);
 
   // Deep link handler — saves token and navigates to record
   const handleDeepLinkUrls = useCallback(
@@ -353,12 +372,7 @@ export function App() {
           loading={gallery.loading}
           error={gallery.error}
           onSessionClick={(token) => {
-            const session = gallery.sessions.find((s) => s.token === token);
-            if (session && ["pending", "active", "paused"].includes(session.status)) {
-              navigate({ page: "record", token });
-            } else {
-              navigate({ page: "session", token });
-            }
+            navigate({ page: "session", token });
           }}
           onArchive={(token) => {
             tokenStore.archiveToken(token);
@@ -421,6 +435,16 @@ const styles: Record<string, React.CSSProperties> = {
   errorBanner: {
     padding: "10px 14px", marginBottom: 12, background: "rgba(239,68,68,0.15)",
     border: "1px solid #ef4444", borderRadius: 8, color: "#fca5a5", fontSize: 13,
+  },
+  errorBox: {
+    maxWidth: 400, width: "100%", padding: "12px 14px",
+    background: "rgba(239,68,68,0.1)", border: "1px solid #ef4444",
+    borderRadius: 8, marginTop: 8,
+  },
+  errorDetail: {
+    margin: 0, fontSize: 11, fontFamily: "monospace",
+    whiteSpace: "pre-wrap" as const, wordBreak: "break-all" as const,
+    maxHeight: 150, overflowY: "auto" as const, color: "#fca5a5",
   },
   controls: {
     display: "flex", alignItems: "center", gap: 10,

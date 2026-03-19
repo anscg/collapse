@@ -97,26 +97,28 @@ pub struct ConfirmResponse {
 /// Check if screen recording permission is granted.
 /// Returns "granted" or "denied". Non-macOS platforms always return "granted".
 ///
-/// CGPreflightScreenCaptureAccess is unreliable during `tauri dev` because the
-/// debug binary runs under the terminal's identity. As a fallback we attempt an
-/// actual screen capture — if xcap succeeds and returns a non-empty image,
-/// permission is effectively granted regardless of what the CG API says.
+/// In debug builds (`tauri dev`), the permission check is unreliable because the
+/// binary runs under the terminal's identity, not the app's. We skip the check
+/// entirely in debug mode to avoid getting stuck on the permission screen.
 #[tauri::command]
 fn check_screen_permission() -> String {
     #[cfg(target_os = "macos")]
     {
-        // Fast path: CG API says yes
+        // Debug builds run under the terminal's identity, so CGPreflight
+        // is unreliable and xcap may return black frames. Skip entirely.
+        if cfg!(debug_assertions) {
+            return "granted".into();
+        }
+
+        // Release: trust the CG API
         if unsafe { CGPreflightScreenCaptureAccess() } {
             return "granted".into();
         }
 
-        // Fallback: try an actual capture. If it works, permission is granted
-        // even though CGPreflight returned false (common in dev builds).
+        // Fallback: try an actual capture in case CGPreflight is wrong
         if let Ok(monitors) = xcap::Monitor::all() {
             if let Some(m) = monitors.into_iter().next() {
                 if let Ok(img) = m.capture_image() {
-                    // A denied capture returns a fully-transparent/black image.
-                    // Check if any pixel has non-zero RGB values.
                     let has_content = img.pixels().any(|p| p.0[0] > 0 || p.0[1] > 0 || p.0[2] > 0);
                     if has_content {
                         return "granted".into();
@@ -309,6 +311,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_deep_link::init())
+        .plugin(tauri_plugin_http::init())
         .manage(AppState {
             config: Mutex::new(None),
         })

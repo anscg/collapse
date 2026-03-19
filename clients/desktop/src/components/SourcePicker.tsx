@@ -32,67 +32,37 @@ interface SourcePickerProps {
   onSelect: (source: CaptureSource) => void;
 }
 
-/** Shows a live preview of the currently highlighted source */
-function LivePreview({ source }: { source: CaptureSource | null }) {
-  const { previewUrl, error } = useScreenPreview(source, 2000);
-
-  if (!source) {
-    return (
-      <div style={previewStyles.wrap}>
-        <div style={previewStyles.placeholder}>
-          <p style={previewStyles.placeholderText}>
-            Hover over a source to preview
-          </p>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div style={previewStyles.wrap}>
-      {previewUrl ? (
-        <img src={previewUrl} alt="Preview" style={previewStyles.img} />
-      ) : error ? (
-        <div style={previewStyles.placeholder}>
-          <p style={{ ...previewStyles.placeholderText, color: "#fca5a5" }}>
-            {error}
-          </p>
-        </div>
-      ) : (
-        <div style={previewStyles.placeholder}>
-          <p style={previewStyles.placeholderText}>Capturing preview...</p>
-        </div>
-      )}
-    </div>
-  );
+function sourcesEqual(a: CaptureSource | null, b: CaptureSource | null): boolean {
+  if (!a || !b) return false;
+  return a.type === b.type && a.id === b.id;
 }
 
 export function SourcePicker({ onSelect }: SourcePickerProps) {
   const [sources, setSources] = useState<CaptureSourceList | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<"screens" | "windows">("screens");
-  const [hoveredSource, setHoveredSource] = useState<CaptureSource | null>(null);
-  const [selectedSource, setSelectedSource] = useState<CaptureSource | null>(null);
+  const [selected, setSelected] = useState<CaptureSource | null>(null);
 
-  // The source to preview: selected > hovered > primary monitor
-  const previewSource =
-    selectedSource ??
-    hoveredSource ??
-    (sources?.monitors.find((m) => m.isPrimary)
-      ? { type: "monitor" as const, id: sources!.monitors.find((m) => m.isPrimary)!.id }
-      : sources?.monitors[0]
-        ? { type: "monitor" as const, id: sources.monitors[0].id }
-        : null);
+  // Live preview of currently selected source
+  const { previewUrl } = useScreenPreview(selected, 1500);
 
   const refresh = useCallback(async () => {
     try {
       const result = await invoke<CaptureSourceList>("list_capture_sources");
       setSources(result);
       setError(null);
+
+      // Auto-select primary monitor if nothing selected yet
+      if (!selected) {
+        const primary = result.monitors.find((m) => m.isPrimary) ?? result.monitors[0];
+        if (primary) {
+          setSelected({ type: "monitor", id: primary.id });
+        }
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
-  }, []);
+  }, [selected]);
 
   useEffect(() => { refresh(); }, [refresh]);
 
@@ -121,9 +91,19 @@ export function SourcePicker({ onSelect }: SourcePickerProps) {
       <h2 style={styles.heading}>What should Collapse capture?</h2>
 
       {/* Live preview */}
-      <LivePreview source={previewSource} />
+      <div style={styles.previewWrap}>
+        {previewUrl ? (
+          <img src={previewUrl} alt="Preview" style={styles.previewImg} />
+        ) : (
+          <div style={styles.previewPlaceholder}>
+            <p style={styles.previewPlaceholderText}>
+              {selected ? "Capturing preview..." : "Select a source below"}
+            </p>
+          </div>
+        )}
+      </div>
 
-      {/* Tabs — only show if there are windows to pick from */}
+      {/* Tabs */}
       {hasWindows && (
         <div style={styles.tabs}>
           <button
@@ -149,7 +129,7 @@ export function SourcePicker({ onSelect }: SourcePickerProps) {
         {(tab === "screens" || !hasWindows) &&
           sources.monitors.map((m) => {
             const src: CaptureSource = { type: "monitor", id: m.id };
-            const isSelected = selectedSource?.type === "monitor" && selectedSource.id === m.id;
+            const isSelected = sourcesEqual(selected, src);
             return (
               <button
                 key={`m-${m.id}`}
@@ -157,19 +137,13 @@ export function SourcePicker({ onSelect }: SourcePickerProps) {
                   ...styles.sourceItem,
                   ...(isSelected ? styles.sourceItemSelected : {}),
                 }}
-                onClick={() => {
-                  setSelectedSource(src);
-                  onSelect(src);
-                }}
-                onMouseEnter={() => setHoveredSource(src)}
-                onMouseLeave={() => setHoveredSource(null)}
+                onClick={() => setSelected(src)}
               >
-                <div style={styles.sourceIcon}>
-                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                    <rect x="2" y="3" width="20" height="14" rx="2" ry="2" />
-                    <line x1="8" y1="21" x2="16" y2="21" />
-                    <line x1="12" y1="17" x2="12" y2="21" />
-                  </svg>
+                <div style={{
+                  ...styles.radio,
+                  ...(isSelected ? styles.radioSelected : {}),
+                }}>
+                  {isSelected && <div style={styles.radioDot} />}
                 </div>
                 <div style={styles.sourceInfo}>
                   <span style={styles.sourceName}>
@@ -181,7 +155,6 @@ export function SourcePicker({ onSelect }: SourcePickerProps) {
                     {m.scaleFactor > 1 && ` @ ${m.scaleFactor}x`}
                   </span>
                 </div>
-                <span style={styles.arrow}>&rsaquo;</span>
               </button>
             );
           })}
@@ -189,7 +162,7 @@ export function SourcePicker({ onSelect }: SourcePickerProps) {
         {tab === "windows" && hasWindows &&
           sources.windows.map((w) => {
             const src: CaptureSource = { type: "window", id: w.id };
-            const isSelected = selectedSource?.type === "window" && selectedSource.id === w.id;
+            const isSelected = sourcesEqual(selected, src);
             return (
               <button
                 key={`w-${w.id}`}
@@ -198,25 +171,17 @@ export function SourcePicker({ onSelect }: SourcePickerProps) {
                   ...(isSelected ? styles.sourceItemSelected : {}),
                   ...(w.isMinimized ? { opacity: 0.5 } : {}),
                 }}
-                onClick={() => {
-                  setSelectedSource(src);
-                  onSelect(src);
-                }}
-                onMouseEnter={() => setHoveredSource(src)}
-                onMouseLeave={() => setHoveredSource(null)}
+                onClick={() => setSelected(src)}
               >
-                <div style={styles.sourceIcon}>
-                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                    <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
-                    <line x1="3" y1="9" x2="21" y2="9" />
-                    <circle cx="7" cy="6" r="1" fill="currentColor" />
-                    <circle cx="10" cy="6" r="1" fill="currentColor" />
-                  </svg>
+                <div style={{
+                  ...styles.radio,
+                  ...(isSelected ? styles.radioSelected : {}),
+                }}>
+                  {isSelected && <div style={styles.radioDot} />}
                 </div>
                 <div style={styles.sourceInfo}>
                   <span style={styles.sourceName}>
                     {w.appName || w.title}
-                    {w.isFocused && <span style={styles.badge}>Focused</span>}
                     {w.isMinimized && <span style={styles.badgeDim}>Minimized</span>}
                   </span>
                   <span style={styles.sourceMeta}>
@@ -224,34 +189,23 @@ export function SourcePicker({ onSelect }: SourcePickerProps) {
                     {w.width}x{w.height}
                   </span>
                 </div>
-                <span style={styles.arrow}>&rsaquo;</span>
               </button>
             );
           })}
       </div>
+
+      {/* Start button */}
+      {selected && (
+        <button
+          style={styles.startBtn}
+          onClick={() => onSelect(selected)}
+        >
+          Start Capture
+        </button>
+      )}
     </div>
   );
 }
-
-const previewStyles: Record<string, React.CSSProperties> = {
-  wrap: {
-    borderRadius: 10,
-    overflow: "hidden",
-    background: "#111",
-    border: "1px solid #333",
-    marginBottom: 14,
-    aspectRatio: "16/9",
-  },
-  img: { width: "100%", height: "100%", objectFit: "contain", display: "block" },
-  placeholder: {
-    width: "100%",
-    height: "100%",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  placeholderText: { fontSize: 13, color: "#555", textAlign: "center" },
-};
 
 const styles: Record<string, React.CSSProperties> = {
   container: { maxWidth: 480, margin: "0 auto", padding: 16 },
@@ -268,6 +222,22 @@ const styles: Record<string, React.CSSProperties> = {
     padding: "8px 20px", fontSize: 13, fontWeight: 600,
     background: "#3b82f6", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer",
   },
+
+  // Preview
+  previewWrap: {
+    borderRadius: 10, overflow: "hidden", background: "#111",
+    border: "1px solid #333", marginBottom: 14, aspectRatio: "16/9",
+  },
+  previewImg: {
+    width: "100%", height: "100%", objectFit: "contain", display: "block",
+  },
+  previewPlaceholder: {
+    width: "100%", height: "100%", display: "flex",
+    alignItems: "center", justifyContent: "center",
+  },
+  previewPlaceholderText: { fontSize: 13, color: "#555", textAlign: "center" },
+
+  // Tabs
   tabs: {
     display: "flex", gap: 4, marginBottom: 10, background: "#1a1a1a",
     borderRadius: 8, padding: 4,
@@ -286,6 +256,8 @@ const styles: Record<string, React.CSSProperties> = {
     padding: "7px 10px", fontSize: 14, background: "transparent",
     color: "#888", border: "none", cursor: "pointer", borderRadius: 6,
   },
+
+  // Source list
   list: {
     display: "flex", flexDirection: "column", gap: 4,
     maxHeight: 280, overflowY: "auto",
@@ -300,7 +272,21 @@ const styles: Record<string, React.CSSProperties> = {
     borderColor: "#3b82f6",
     background: "rgba(59,130,246,0.08)",
   },
-  sourceIcon: { color: "#888", flexShrink: 0 },
+
+  // Radio button
+  radio: {
+    width: 18, height: 18, borderRadius: "50%",
+    border: "2px solid #555", flexShrink: 0,
+    display: "flex", alignItems: "center", justifyContent: "center",
+  },
+  radioSelected: {
+    borderColor: "#3b82f6",
+  },
+  radioDot: {
+    width: 8, height: 8, borderRadius: "50%",
+    background: "#3b82f6",
+  },
+
   sourceInfo: {
     flex: 1, display: "flex", flexDirection: "column" as const, gap: 2,
     minWidth: 0,
@@ -323,5 +309,11 @@ const styles: Record<string, React.CSSProperties> = {
     background: "rgba(136,136,136,0.15)", padding: "1px 6px",
     borderRadius: 4,
   },
-  arrow: { fontSize: 20, color: "#555", flexShrink: 0 },
+
+  // Start button
+  startBtn: {
+    width: "100%", padding: "14px 24px", fontSize: 15, fontWeight: 600,
+    background: "#3b82f6", color: "#fff", border: "none", borderRadius: 10,
+    cursor: "pointer", marginTop: 14,
+  },
 };

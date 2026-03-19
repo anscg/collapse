@@ -39,12 +39,7 @@ export function App() {
           loading={gallery.loading}
           error={gallery.error}
           onSessionClick={(token) => {
-            const session = gallery.sessions.find((s) => s.token === token);
-            if (session && ["pending", "active", "paused"].includes(session.status)) {
-              navigate({ page: "record", token });
-            } else {
-              navigate({ page: "session", token });
-            }
+            navigate({ page: "session", token });
           }}
           onArchive={(token) => {
             tokenStore.archiveToken(token);

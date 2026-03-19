@@ -73,7 +73,10 @@ export function SessionDetail({
       </div>
 
       {error && (
-        <div style={styles.errorBanner}>{error}</div>
+        <div style={styles.errorBanner}>
+          <strong style={{ display: "block", marginBottom: 4 }}>Error</strong>
+          <pre style={styles.errorDetail}>{error}</pre>
+        </div>
       )}
 
       {!status && !error && (
@@ -200,6 +203,16 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: 8,
     color: "#fca5a5",
     fontSize: 13,
+  },
+  errorDetail: {
+    margin: 0,
+    fontSize: 11,
+    fontFamily: "monospace",
+    whiteSpace: "pre-wrap" as const,
+    wordBreak: "break-all" as const,
+    maxHeight: 120,
+    overflowY: "auto" as const,
+    color: "#fca5a5",
   },
   videoWrap: {
     borderRadius: 10,

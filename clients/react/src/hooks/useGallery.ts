@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import type { SessionSummary } from "@collapse/shared";
 
 export interface UseGalleryOptions {
@@ -19,10 +19,22 @@ export function useGallery({ apiBaseUrl, tokens }: UseGalleryOptions): UseGaller
   const [error, setError] = useState<string | null>(null);
   const [refreshCounter, setRefreshCounter] = useState(0);
 
+  // Stable reference for the token list to avoid infinite re-renders
+  const tokensKey = tokens.join(",");
+
   const refresh = useCallback(() => setRefreshCounter((c) => c + 1), []);
 
   useEffect(() => {
     if (tokens.length === 0) {
+      setSessions([]);
+      setLoading(false);
+      setError(null);
+      return;
+    }
+
+    // Only send valid hex tokens to avoid server-side validation errors
+    const validTokens = tokens.filter((t) => /^[a-f0-9]{64}$/i.test(t));
+    if (validTokens.length === 0) {
       setSessions([]);
       setLoading(false);
       return;
@@ -34,20 +46,28 @@ export function useGallery({ apiBaseUrl, tokens }: UseGalleryOptions): UseGaller
     fetch(`${apiBaseUrl}/api/sessions/batch`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ tokens }),
+      body: JSON.stringify({ tokens: validTokens }),
     })
       .then(async (res) => {
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        if (!res.ok) {
+          // Don't crash on server errors — just show empty
+          console.warn(`Gallery batch fetch failed: HTTP ${res.status}`);
+          return { sessions: [] };
+        }
         return res.json();
       })
       .then((data: { sessions: SessionSummary[] }) => {
         if (!cancelled) {
-          setSessions(data.sessions);
+          setSessions(data.sessions ?? []);
           setError(null);
         }
       })
       .catch((err) => {
-        if (!cancelled) setError(err.message);
+        if (!cancelled) {
+          console.warn("Gallery fetch error:", err);
+          setError(err.message);
+          // Keep showing whatever sessions we had
+        }
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -56,7 +76,7 @@ export function useGallery({ apiBaseUrl, tokens }: UseGalleryOptions): UseGaller
     return () => {
       cancelled = true;
     };
-  }, [apiBaseUrl, tokens.join(","), refreshCounter]);
+  }, [apiBaseUrl, tokensKey, refreshCounter]);
 
   // Re-fetch on tab focus
   useEffect(() => {

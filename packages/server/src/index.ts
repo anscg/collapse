@@ -15,7 +15,13 @@ const app = Fastify({ logger: true });
 
 await app.register(cors, {
   origin: (origin, cb) => {
-    if (!origin || /\.hackclub\.com$/.test(new URL(origin).hostname)) {
+    // Allow: no origin (server-to-server), *.hackclub.com, localhost dev, tauri app
+    if (
+      !origin ||
+      /\.hackclub\.com$/.test(new URL(origin).hostname) ||
+      /^https?:\/\/localhost(:\d+)?$/.test(origin) ||
+      origin.startsWith("tauri://")
+    ) {
       cb(null, true);
     } else {
       cb(new Error("Not allowed by CORS"), false);
