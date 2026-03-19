@@ -45,6 +45,7 @@ export function DesktopRecorder({ token, source, onChangeSource, onBack }: Deskt
   const [pauseLoading, setPauseLoading] = useState(false);
   const [resumeLoading, setResumeLoading] = useState(false);
   const [stopLoading, setStopLoading] = useState(false);
+  const [stopAction, setStopAction] = useState<"save" | "skip" | null>(null);
   const [showNamingPrompt, setShowNamingPrompt] = useState(false);
   const [timelapseName, setTimelapseName] = useState("");
   const nameInputRef = useRef<HTMLInputElement>(null);
@@ -153,7 +154,7 @@ export function DesktopRecorder({ token, source, onChangeSource, onBack }: Deskt
         </Button>
         <StatusBar
           displaySeconds={displaySeconds}
-          screenshotCount={capture.screenshotCount}
+          screenshotCount={session.screenshotCount + capture.screenshotCount}
           uploads={{ pending: 0, completed: 0, failed: 0 }}
         />
         <div style={{ marginTop: spacing.lg }}>
@@ -212,7 +213,7 @@ export function DesktopRecorder({ token, source, onChangeSource, onBack }: Deskt
 
       <StatusBar
         displaySeconds={displaySeconds}
-        screenshotCount={capture.screenshotCount}
+        screenshotCount={session.screenshotCount + capture.screenshotCount}
         uploads={{ pending: 0, completed: 0, failed: 0 }}
       />
 
@@ -280,8 +281,9 @@ export function DesktopRecorder({ token, source, onChangeSource, onBack }: Deskt
               variant="primary"
               size="lg"
               fullWidth
-              loading={stopLoading}
-              onClick={() => handleConfirmStop(timelapseName)}
+              loading={stopLoading && stopAction === "save"}
+              disabled={stopLoading}
+              onClick={() => { setStopAction("save"); handleConfirmStop(timelapseName); }}
             >
               Save &amp; Stop
             </Button>
@@ -289,8 +291,9 @@ export function DesktopRecorder({ token, source, onChangeSource, onBack }: Deskt
               variant="secondary"
               size="lg"
               fullWidth
-              loading={stopLoading}
-              onClick={() => handleConfirmStop(null)}
+              loading={stopLoading && stopAction === "skip"}
+              disabled={stopLoading}
+              onClick={() => { setStopAction("skip"); handleConfirmStop(null); }}
             >
               Skip
             </Button>
@@ -324,7 +327,7 @@ export function DesktopRecorder({ token, source, onChangeSource, onBack }: Deskt
               <Button variant="primary" size="lg" loading={resumeLoading} onClick={handleResume} disabled={stopLoading}>
                 Resume
               </Button>
-              <Button variant="danger" size="md" onClick={handleStopClick} disabled={resumeLoading}>
+              <Button variant="danger" size="lg" onClick={handleStopClick} disabled={resumeLoading}>
                 Stop Session
               </Button>
             </>
