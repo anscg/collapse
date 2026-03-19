@@ -106,16 +106,20 @@ jobs:
         shell: bash
         run: |
           TAG="${GITHUB_REF#refs/tags/}"
-          RELEASE_ID=$(gh api "repos/${{ github.repository }}/releases/tags/${TAG}" --jq '.id')
           OS_LABEL="${{ matrix.os_label }}"
 
+          # Draft releases aren't visible via /releases/tags/, so search all releases
+          RELEASE_ID=$(gh api "repos/${{ github.repository }}/releases" --jq ".[] | select(.tag_name==\"${TAG}\") | .id")
+          if [ -z "$RELEASE_ID" ]; then
+            echo "No release found for tag ${TAG}, skipping rename"
+            exit 0
+          fi
+
           gh api "repos/${{ github.repository }}/releases/${RELEASE_ID}/assets" --jq '.[] | "\(.id) \(.name)"' | while read -r ASSET_ID ASSET_NAME; do
-            # Insert OS label before the file extension
-            # e.g. Collapse_0.0.1_aarch64.dmg → Collapse_0.0.1_macos-arm64_aarch64.dmg
-            EXT="${ASSET_NAME##*.}"
-            BASE="${ASSET_NAME%.*}"
             # Only rename assets that don't already have an OS label
             if [[ "$ASSET_NAME" != *"$OS_LABEL"* ]]; then
+              EXT="${ASSET_NAME##*.}"
+              BASE="${ASSET_NAME%.*}"
               NEW_NAME="${BASE}_${OS_LABEL}.${EXT}"
               echo "Renaming: ${ASSET_NAME} → ${NEW_NAME}"
               gh api --method PATCH "repos/${{ github.repository }}/releases/assets/${ASSET_ID}" -f name="${NEW_NAME}" --silent
