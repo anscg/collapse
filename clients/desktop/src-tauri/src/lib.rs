@@ -2,18 +2,14 @@ mod capture;
 
 use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
-use tauri::{Emitter, State};
+use tauri::{Manager, State};
 use tauri_plugin_deep_link::DeepLinkExt;
 
-#[cfg(target_os = "macos")]
-extern "C" {
-    fn CGPreflightScreenCaptureAccess() -> bool;
-    fn CGRequestScreenCaptureAccess() -> bool;
-}
 
 /// App state shared across commands.
 pub struct AppState {
     pub config: Mutex<Option<SessionConfig>>,
+    pub cold_start_urls: Mutex<Option<Vec<String>>>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -94,73 +90,11 @@ pub struct ConfirmResponse {
     pub next_expected_at: String,
 }
 
-/// Check if screen recording permission is granted.
-/// Returns "granted" or "denied". Non-macOS platforms always return "granted".
-///
-/// In debug builds (`tauri dev`), the permission check is unreliable because the
-/// binary runs under the terminal's identity, not the app's. We skip the check
-/// entirely in debug mode to avoid getting stuck on the permission screen.
+/// Return the deep link URLs from cold start (if any), then clear them.
 #[tauri::command]
-fn check_screen_permission() -> String {
-    #[cfg(target_os = "macos")]
-    {
-        // Debug builds run under the terminal's identity, so CGPreflight
-        // is unreliable and xcap may return black frames. Skip entirely.
-        if cfg!(debug_assertions) {
-            return "granted".into();
-        }
-
-        // Release: trust the CG API
-        if unsafe { CGPreflightScreenCaptureAccess() } {
-            return "granted".into();
-        }
-
-        // Fallback: try an actual capture in case CGPreflight is wrong
-        if let Ok(monitors) = xcap::Monitor::all() {
-            if let Some(m) = monitors.into_iter().next() {
-                if let Ok(img) = m.capture_image() {
-                    let has_content = img.pixels().any(|p| p.0[0] > 0 || p.0[1] > 0 || p.0[2] > 0);
-                    if has_content {
-                        return "granted".into();
-                    }
-                }
-            }
-        }
-
-        "denied".into()
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        "granted".into()
-    }
-}
-
-/// Request screen recording permission (macOS only).
-/// On macOS 10.15+, this triggers the system prompt if permission hasn't been decided yet.
-/// Returns true if permission was granted.
-#[tauri::command]
-fn request_screen_permission() -> bool {
-    #[cfg(target_os = "macos")]
-    {
-        unsafe { CGRequestScreenCaptureAccess() }
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        true
-    }
-}
-
-/// Open the system Screen Recording preferences pane (macOS only).
-#[tauri::command]
-fn open_screen_permission_settings() {
-    #[cfg(target_os = "macos")]
-    {
-        use std::process::Command;
-        // Opens System Settings > Privacy & Security > Screen Recording
-        let _ = Command::new("open")
-            .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")
-            .spawn();
-    }
+fn get_cold_start_urls(state: State<'_, AppState>) -> Vec<String> {
+    let mut urls = state.cold_start_urls.lock().unwrap_or_else(|e| e.into_inner());
+    urls.take().unwrap_or_default()
 }
 
 /// List available capture sources (monitors + windows).
@@ -312,29 +246,42 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_http::init())
+        .plugin(tauri_plugin_macos_permissions::init())
         .manage(AppState {
             config: Mutex::new(None),
+            cold_start_urls: Mutex::new(None),
         })
         .invoke_handler(tauri::generate_handler![
-            check_screen_permission,
-            request_screen_permission,
-            open_screen_permission_settings,
             list_capture_sources,
             configure,
             take_screenshot,
             capture_and_upload,
+            get_cold_start_urls,
         ])
         .setup(|app| {
-            // Check if the app was launched via a deep link (cold start)
-            if let Ok(Some(urls)) = app.deep_link().get_current() {
+            // Try get_current() for cold start
+            let current = app.deep_link().get_current();
+            eprintln!("[deep-link] get_current() = {current:?}");
+            if let Ok(Some(urls)) = current {
                 let url_strings: Vec<String> = urls.into_iter().map(|u| u.to_string()).collect();
-                let handle = app.handle().clone();
-                // Emit the deep link URLs to the frontend after window is ready
-                tauri::async_runtime::spawn(async move {
-                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-                    let _ = handle.emit("deep-link://new-url", url_strings);
-                });
+                eprintln!("[deep-link] cold start urls: {url_strings:?}");
+                if let Ok(mut state) = app.state::<AppState>().cold_start_urls.lock() {
+                    *state = Some(url_strings);
+                }
             }
+
+            // Also register a Rust-side listener for deep links that arrive
+            // after setup (macOS sometimes delivers the URL via Apple Event
+            // after the app finishes launching).
+            let handle = app.handle().clone();
+            app.deep_link().on_open_url(move |event| {
+                let url_strings: Vec<String> = event.urls().iter().map(|u| u.to_string()).collect();
+                eprintln!("[deep-link] on_open_url: {url_strings:?}");
+                if let Ok(mut state) = handle.state::<AppState>().cold_start_urls.lock() {
+                    *state = Some(url_strings);
+                }
+            });
+
             Ok(())
         })
         .run(tauri::generate_context!())

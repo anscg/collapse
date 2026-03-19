@@ -1,7 +1,10 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { onOpenUrl } from "@tauri-apps/plugin-deep-link";
-import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
+import {
+  checkScreenRecordingPermission,
+  requestScreenRecordingPermission,
+} from "tauri-plugin-macos-permissions-api";
 import {
   CollapseProvider,
   useSession,
@@ -53,15 +56,11 @@ type PermissionStatus = "checking" | "granted" | "denied";
 
 function PermissionScreen({ onGranted }: { onGranted: () => void }) {
   const [status, setStatus] = useState<PermissionStatus>("checking");
-  const [requested, setRequested] = useState(false);
-
-  dbg(`PermissionScreen render: status=${status}`);
 
   const checkPermission = useCallback(async () => {
-    dbg("PermissionScreen: calling invoke check_screen_permission...");
-    const result = await invoke<string>("check_screen_permission");
-    dbg("PermissionScreen: result=" + result);
-    if (result === "granted") {
+    const granted = await checkScreenRecordingPermission();
+    dbg("permission check: " + granted);
+    if (granted) {
       setStatus("granted");
       onGranted();
     } else {
@@ -71,25 +70,8 @@ function PermissionScreen({ onGranted }: { onGranted: () => void }) {
 
   useEffect(() => { checkPermission(); }, [checkPermission]);
 
-  useEffect(() => {
-    if (status !== "denied" || !requested) return;
-    const interval = setInterval(checkPermission, 2000);
-    return () => clearInterval(interval);
-  }, [status, requested, checkPermission]);
-
   const handleRequest = useCallback(async () => {
-    const granted = await invoke<boolean>("request_screen_permission");
-    if (granted) {
-      setStatus("granted");
-      onGranted();
-    } else {
-      setRequested(true);
-    }
-  }, [onGranted]);
-
-  const handleOpenSettings = useCallback(async () => {
-    await invoke("open_screen_permission_settings");
-    setRequested(true);
+    await requestScreenRecordingPermission();
   }, []);
 
   if (status === "checking") {
@@ -115,27 +97,13 @@ function PermissionScreen({ onGranted }: { onGranted: () => void }) {
           Collapse needs screen recording access to capture screenshots of your work.
           Your screen is captured locally and only periodic screenshots are uploaded.
         </p>
-        {!requested ? (
-          <button style={styles.permissionBtn} onClick={handleRequest}>
-            Grant Permission
-          </button>
-        ) : (
-          <>
-            <p style={{ ...styles.permissionText, color: "#f59e0b", marginBottom: 12 }}>
-              Please enable "Collapse" in System Settings, then return here.
-              This page will update automatically.
-            </p>
-            <button style={styles.permissionBtn} onClick={handleOpenSettings}>
-              Open System Settings
-            </button>
-            <button
-              style={{ ...styles.permissionBtnSecondary, marginTop: 8 }}
-              onClick={checkPermission}
-            >
-              Check Again
-            </button>
-          </>
-        )}
+        <button style={styles.permissionBtn} onClick={handleRequest}>
+          Grant Permission
+        </button>
+        <p style={{ ...styles.permissionText, color: "#f59e0b", marginTop: 12, fontSize: 11, lineHeight: 1.5 }}>
+          After enabling "Collapse" in System Settings &gt; Privacy &gt; Screen Recording, quit and reopen the app.
+          If it still doesn't work, remove Collapse from the list entirely, restart the app, and grant permission again.
+        </p>
         <button
           style={{ ...styles.permissionBtnSecondary, marginTop: 16, fontSize: 11, color: "#666" }}
           onClick={onGranted}
@@ -173,6 +141,15 @@ function DesktopRecorder({ token, source, onChangeSource, onBack }: {
       session.updateTrackedSeconds(capture.trackedSeconds);
     }
   }, [capture.trackedSeconds, session.updateTrackedSeconds]);
+
+  // Auto-start capturing once session is ready
+  const autoStarted = React.useRef(false);
+  useEffect(() => {
+    if (!autoStarted.current && !capture.isCapturing && (session.status === "active" || session.status === "pending")) {
+      autoStarted.current = true;
+      capture.startCapturing();
+    }
+  }, [session.status, capture.isCapturing, capture.startCapturing]);
 
   const handleStart = useCallback(async () => {
     await capture.startCapturing();
@@ -278,14 +255,91 @@ function DesktopRecorder({ token, source, onChangeSource, onBack }: {
 
 // ── Recording Page (source picker + recorder) ────────────────
 
-function RecordPage({ token, onBack }: { token: string; onBack: () => void }) {
+function RecordPage({ token, onBack, onViewSession }: {
+  token: string;
+  onBack: () => void;
+  onViewSession: (token: string) => void;
+}) {
   const [captureSource, setCaptureSource] = useState<CaptureSource | null>(null);
+  const [stopping, setStopping] = useState(false);
+  const [sessionCheck, setSessionCheck] = useState<"loading" | "ok" | "finished" | "error">("loading");
+  const [sessionStatus, setSessionStatus] = useState<string | null>(null);
+  const [checkError, setCheckError] = useState<string | null>(null);
+
+  // Check if the session is still recordable before showing source picker
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch(`${API_BASE}/api/sessions/${token}/status`);
+        if (!res.ok) {
+          setCheckError(`HTTP ${res.status} ${await res.text().catch(() => "")}`);
+          setSessionCheck("error");
+          return;
+        }
+        const data = await res.json();
+        setSessionStatus(data.status);
+        if (["stopped", "compiling", "complete", "failed"].includes(data.status)) {
+          setSessionCheck("finished");
+        } else {
+          setSessionCheck("ok");
+        }
+      } catch (err: any) {
+        setCheckError(err.message || String(err));
+        setSessionCheck("error");
+      }
+    })();
+  }, [token]);
+
+  const handleStop = useCallback(async () => {
+    setStopping(true);
+    try {
+      await fetch(`${API_BASE}/api/sessions/${token}/stop`, { method: "POST" });
+    } catch {}
+    onBack();
+  }, [token, onBack]);
+
+  if (sessionCheck === "loading") {
+    return <div style={styles.center}><p style={styles.text}>Loading session...</p></div>;
+  }
+
+  if (sessionCheck === "error") {
+    return (
+      <div style={styles.center}>
+        <h2 style={{ ...styles.heading, color: "#ef4444" }}>Session Error</h2>
+        <pre style={{ ...styles.errorDetail, maxWidth: 400, marginBottom: 16 }}>{checkError}</pre>
+        <button style={styles.backBtn} onClick={onBack}>&larr; Gallery</button>
+      </div>
+    );
+  }
+
+  if (sessionCheck === "finished") {
+    const label = sessionStatus === "complete" ? "Complete" : sessionStatus === "compiling" ? "Compiling" : sessionStatus === "failed" ? "Failed" : "Stopped";
+    return (
+      <div style={styles.center}>
+        <h2 style={styles.heading}>Session Already {label}</h2>
+        <p style={{ ...styles.text, marginBottom: 20 }}>
+          This session is no longer recordable.
+        </p>
+        <div style={{ display: "flex", gap: 10 }}>
+          <button style={styles.permissionBtn} onClick={() => onViewSession(token)}>
+            View Timelapse
+          </button>
+          <button style={styles.backBtn} onClick={onBack}>
+            &larr; Gallery
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   if (!captureSource) {
     return (
       <div>
-        <div style={{ maxWidth: 480, margin: "0 auto", padding: "16px 16px 0" }}>
+        <div style={{ maxWidth: 480, margin: "0 auto", padding: "16px 16px 0", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <button style={styles.backBtn} onClick={onBack}>&larr; Gallery</button>
+          <button style={styles.stopBtn} onClick={handleStop} disabled={stopping}>
+            {stopping ? "Stopping..." : "Stop Session"}
+          </button>
         </div>
         <SourcePicker onSelect={setCaptureSource} />
       </div>
@@ -322,12 +376,16 @@ export function App() {
   });
   dbg(`App: after useGallery, permissionGranted=${permissionGranted}`);
 
-  // Deep link handler — saves token and navigates to record
+  // Deep link handler — saves token and navigates to record.
+  // Tracks the last processed URL to deduplicate retried cold-start emits.
+  const lastDeepLink = React.useRef<string | null>(null);
   const handleDeepLinkUrls = useCallback(
     (urls: string[]) => {
       for (const url of urls) {
+        if (url === lastDeepLink.current) return; // already handled
         const token = extractToken(url);
         if (token) {
+          lastDeepLink.current = url;
           tokenStore.addToken(token);
           navigate({ page: "record", token });
           return;
@@ -337,15 +395,35 @@ export function App() {
     [tokenStore, navigate],
   );
 
+  // Listen for deep links while app is running (warm start)
   useEffect(() => {
-    const unlistenPlugin = onOpenUrl(handleDeepLinkUrls);
-    const unlistenRust = listen<string[]>("deep-link://new-url", (event) => {
-      handleDeepLinkUrls(event.payload);
+    const unlistenPlugin = onOpenUrl((urls) => {
+      dbg("onOpenUrl: " + JSON.stringify(urls));
+      handleDeepLinkUrls(urls);
     });
-    return () => {
-      unlistenPlugin.then((fn) => fn());
-      unlistenRust.then((fn) => fn());
+    return () => { unlistenPlugin.then((fn) => fn()); };
+  }, [handleDeepLinkUrls]);
+
+  // Poll for cold-start deep link URLs. The Rust side stashes URLs from both
+  // get_current() (immediate) and on_open_url (delayed Apple Event). We poll
+  // a few times to catch URLs that arrive after the app finishes launching.
+  useEffect(() => {
+    let cancelled = false;
+    const check = async () => {
+      for (let i = 0; i < 10 && !cancelled; i++) {
+        try {
+          const urls = await invoke<string[]>("get_cold_start_urls");
+          dbg(`cold start poll #${i}: ${JSON.stringify(urls)}`);
+          if (urls.length > 0) {
+            handleDeepLinkUrls(urls);
+            return;
+          }
+        } catch {}
+        await new Promise((r) => setTimeout(r, 500));
+      }
     };
+    check();
+    return () => { cancelled = true; };
   }, [handleDeepLinkUrls]);
 
   // Handle ?token= query param (dev mode)
@@ -372,7 +450,12 @@ export function App() {
           loading={gallery.loading}
           error={gallery.error}
           onSessionClick={(token) => {
-            navigate({ page: "session", token });
+            const session = gallery.sessions.find((s) => s.token === token);
+            if (session && ["pending", "active", "paused"].includes(session.status)) {
+              navigate({ page: "record", token });
+            } else {
+              navigate({ page: "session", token });
+            }
           }}
           onArchive={(token) => {
             tokenStore.archiveToken(token);
@@ -389,6 +472,10 @@ export function App() {
           onBack={() => {
             gallery.refresh();
             navigate({ page: "gallery" });
+          }}
+          onViewSession={(token) => {
+            tokenStore.addToken(token);
+            navigate({ page: "session", token });
           }}
         />
       );
