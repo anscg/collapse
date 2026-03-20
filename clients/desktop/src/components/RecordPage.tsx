@@ -111,7 +111,7 @@ export function RecordPage({ token, onBack, onViewSession }: RecordPageProps) {
 
   if (!captureSource) {
     return (
-      <div style={{ display: "flex", flexDirection: "column", height: "100vh", overflow: "hidden" }}>
+      <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
         <PageContainer maxWidth={480} style={{ paddingBottom: 0, display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0 }}>
           <Button variant="secondary" size="sm" onClick={onBack}>
             &larr; Gallery
@@ -120,10 +120,12 @@ export function RecordPage({ token, onBack, onViewSession }: RecordPageProps) {
             Stop Session
           </Button>
         </PageContainer>
-        <SourcePicker
-          onSelect={setCaptureSource}
-          submitLabel={sessionStatus === "active" || sessionStatus === "paused" ? "Resume Session" : "Start Capture"}
-        />
+        <div style={{ flex: 1, minHeight: 0 }}>
+          <SourcePicker
+            onSelect={setCaptureSource}
+            submitLabel={sessionStatus === "active" || sessionStatus === "paused" ? "Resume Session" : "Start Capture"}
+          />
+        </div>
       </div>
     );
   }
