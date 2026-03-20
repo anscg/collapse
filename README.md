@@ -20,4 +20,16 @@ Lapse is a standalone, general purpose, time-lapse creation tool with [Hackatime
 
 Collapse is a service that processes screenshots for proof of time spent on a project. At it's core, Collapse accepts screenshots from clients (similar to Hackatime's heartbeats). Collapse needs to be integrated into other Hack Club programs to function.
 
-... this doc is a WIP- more to be added soon!
+## How it works... in a nutshell
+
+Collapse is designed to be simple, resilient, and easy to integrate. Here's how it works at a high level:
+
+1. A Hack Club program generates a session and shares it with the client.
+2. The client begins capturing screenshots once per minute, uploading them as they are taken.
+3. The server tracks the number and timing of screenshots received to track time.
+4. When the session finishes, Collapse stitches the screenshots into a timelapse video.
+5. The Hack Club program can retrieve the session results.
+
+Sessions auto-pause after 5 minutes of inactivity and auto-stop after 30 minutes of being paused.
+
+There is no concept of "users" or "accounts" in Collapse. Sessions are created to be shared to users and viewable by Hack Club programs.
