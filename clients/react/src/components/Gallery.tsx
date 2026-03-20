@@ -70,8 +70,24 @@ export function Gallery({
 
   return (
     <div style={{ padding: spacing.lg }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: spacing.lg }}>
-        <h2 style={{ fontSize: fontSize.heading, fontWeight: fontWeight.bold, color: colors.text.primary, margin: 0 }}>Your Timelapses</h2>
+      <div style={{
+        position: "sticky",
+        top: 0,
+        zIndex: 10,
+        margin: `-${spacing.lg}px -${spacing.lg}px ${spacing.md}px`,
+        padding: `${spacing.lg}px ${spacing.lg}px ${spacing.xxl}px`,
+        display: "flex",
+        justifyContent: "space-between",
+        alignItems: "flex-start",
+        // The frosted glass and background gradient
+        backdropFilter: "blur(12px)",
+        WebkitBackdropFilter: "blur(12px)",
+        background: "linear-gradient(to bottom, var(--color-bg-surface) 40%, transparent 100%)",
+        // This mask smoothly fades out the bottom edge of the sticky header
+        maskImage: "linear-gradient(to bottom, black 60%, transparent 100%)",
+        WebkitMaskImage: "linear-gradient(to bottom, black 60%, transparent 100%)",
+      }}>
+        <h2 style={{ fontSize: fontSize.heading, fontWeight: fontWeight.bold, color: colors.text.primary, margin: 0, marginTop: 4 }}>Your Timelapses</h2>
         {onRefresh && (
           <Button variant="ghost" size="sm" onClick={onRefresh} title="Refresh" style={{ fontSize: fontSize.xxl }}>
             &#x21bb;
