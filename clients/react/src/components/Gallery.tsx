@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useRef, useState, useEffect, useCallback } from "react";
 import type { SessionSummary } from "@collapse/shared";
 import { SessionCard } from "./SessionCard.js";
 import { Button } from "../ui/Button.js";
@@ -23,6 +23,25 @@ export function Gallery({
   onArchive,
   onRefresh,
 }: GalleryProps) {
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const [showTopMask, setShowTopMask] = useState(false);
+  const [showBottomMask, setShowBottomMask] = useState(false);
+
+  const handleScroll = useCallback(() => {
+    if (!scrollRef.current) return;
+    const { scrollTop, scrollHeight, clientHeight } = scrollRef.current;
+    setShowTopMask(scrollTop > 0);
+    // Use a 1px threshold to avoid precision issues
+    setShowBottomMask(Math.ceil(scrollTop + clientHeight) < scrollHeight);
+  }, []);
+
+  // Update mask on mount, window resize, or when sessions change
+  useEffect(() => {
+    handleScroll();
+    window.addEventListener('resize', handleScroll);
+    return () => window.removeEventListener('resize', handleScroll);
+  }, [sessions, handleScroll]);
+
   if (loading && sessions.length === 0) {
     return <GallerySkeleton />;
   }
@@ -81,13 +100,17 @@ export function Gallery({
       </div>
 
       {/* Scrollable Container with Mask */}
-      <div style={{ 
-        flex: 1, 
-        overflowY: "auto", 
-        padding: spacing.lg, 
-        maskImage: "linear-gradient(to bottom, transparent 0%, black 20px, black calc(100% - 20px), transparent 100%)",
-        WebkitMaskImage: "linear-gradient(to bottom, transparent 0%, black 20px, black calc(100% - 20px), transparent 100%)",
-      }}>
+      <div 
+        ref={scrollRef}
+        onScroll={handleScroll}
+        style={{ 
+          flex: 1, 
+          overflowY: "auto", 
+          padding: spacing.lg, 
+          maskImage: `linear-gradient(to bottom, ${showTopMask ? 'transparent 0%, black 20px' : 'black 0%, black 20px'}, ${showBottomMask ? 'black calc(100% - 20px), transparent 100%' : 'black calc(100% - 20px), black 100%'})`,
+          WebkitMaskImage: `linear-gradient(to bottom, ${showTopMask ? 'transparent 0%, black 20px' : 'black 0%, black 20px'}, ${showBottomMask ? 'black calc(100% - 20px), transparent 100%' : 'black calc(100% - 20px), black 100%'})`,
+        }}
+      >
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: spacing.md }}>
           {sessions.map((s) => (
             <SessionCard

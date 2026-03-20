@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useEffect, useState, useCallback, useRef } from "react";
 import { invoke } from "../logger.js";
 import {
   Button,
@@ -54,6 +54,17 @@ export function SourcePicker({ onSelect, submitLabel = "Start Capture" }: Source
   const [tab, setTab] = useState<"screens" | "windows">("screens");
   const [selected, setSelected] = useState<CaptureSource | null>(null);
 
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const [showTopMask, setShowTopMask] = useState(false);
+  const [showBottomMask, setShowBottomMask] = useState(false);
+
+  const handleScroll = useCallback(() => {
+    if (!scrollRef.current) return;
+    const { scrollTop, scrollHeight, clientHeight } = scrollRef.current;
+    setShowTopMask(scrollTop > 0);
+    setShowBottomMask(Math.ceil(scrollTop + clientHeight) < scrollHeight);
+  }, []);
+
   // Live preview of currently selected source
   const { previewUrl } = useScreenPreview(selected, 1500);
 
@@ -64,6 +75,8 @@ export function SourcePicker({ onSelect, submitLabel = "Start Capture" }: Source
       console.log(`[sources] found ${result.monitors.length} monitors, ${result.windows.length} windows`);
       setSources(result);
       setError(null);
+      // Wait for render then check scroll
+      setTimeout(handleScroll, 10);
 
       // Auto-select primary monitor if nothing selected yet
       if (!selected) {
@@ -81,6 +94,12 @@ export function SourcePicker({ onSelect, submitLabel = "Start Capture" }: Source
   }, [selected]);
 
   useEffect(() => { refresh(); }, [refresh]);
+
+  useEffect(() => {
+    handleScroll();
+    window.addEventListener('resize', handleScroll);
+    return () => window.removeEventListener('resize', handleScroll);
+  }, [tab, sources, handleScroll]);
 
   if (error) {
     return (
@@ -181,7 +200,10 @@ export function SourcePicker({ onSelect, submitLabel = "Start Capture" }: Source
       </div>
 
       {/* Source list */}
-      <div style={{
+      <div
+        ref={scrollRef}
+        onScroll={handleScroll}
+        style={{
         display: "flex",
         flexDirection: "column",
         gap: spacing.xs,
@@ -189,8 +211,8 @@ export function SourcePicker({ onSelect, submitLabel = "Start Capture" }: Source
         minHeight: 0, // Critical for nested flex scrolling
         overflowY: "auto",
         // Add a smooth fade out mask at top/bottom of scroll area
-        maskImage: "linear-gradient(to bottom, transparent 0%, black 12px, black calc(100% - 12px), transparent 100%)",
-        WebkitMaskImage: "linear-gradient(to bottom, transparent 0%, black 12px, black calc(100% - 12px), transparent 100%)",
+        maskImage: `linear-gradient(to bottom, ${showTopMask ? 'transparent 0%, black 12px' : 'black 0%, black 12px'}, ${showBottomMask ? 'black calc(100% - 12px), transparent 100%' : 'black calc(100% - 12px), black 100%'})`,
+        WebkitMaskImage: `linear-gradient(to bottom, ${showTopMask ? 'transparent 0%, black 12px' : 'black 0%, black 12px'}, ${showBottomMask ? 'black calc(100% - 12px), transparent 100%' : 'black calc(100% - 12px), black 100%'})`,
         paddingBottom: spacing.xs,
       }}>
         {(tab === "screens" || !hasWindows) &&
