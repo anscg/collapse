@@ -259,14 +259,22 @@ async fn capture_and_upload(
     // Step 2: Get presigned URL from server
     let _ = app.emit("capture-progress", "getting upload url from server...");
     let client = reqwest::Client::new();
-    let upload_url_resp: UploadUrlResponse = client
+    let url_response = client
         .get(format!(
             "{}/api/sessions/{}/upload-url",
             config.api_base_url, config.token
         ))
         .send()
         .await
-        .map_err(|e| format!("Failed to get upload URL: {e}"))?
+        .map_err(|e| format!("Failed to get upload URL: {e}"))?;
+    let url_status = url_response.status();
+    if !url_status.is_success() {
+        let body = url_response.text().await.unwrap_or_default();
+        return Err(format!(
+            "Server rejected upload-url request (HTTP {url_status}): {body}"
+        ));
+    }
+    let upload_url_resp: UploadUrlResponse = url_response
         .json()
         .await
         .map_err(|e| format!("Failed to parse upload URL response: {e}"))?;
@@ -296,7 +304,7 @@ async fn capture_and_upload(
 
     // Step 4: Confirm upload with server
     let _ = app.emit("capture-progress", "confirming upload with server...");
-    let confirm_resp: ConfirmResponse = client
+    let confirm_response = client
         .post(format!(
             "{}/api/sessions/{}/screenshots",
             config.api_base_url, config.token
@@ -309,7 +317,15 @@ async fn capture_and_upload(
         }))
         .send()
         .await
-        .map_err(|e| format!("Confirmation failed: {e}"))?
+        .map_err(|e| format!("Confirmation failed: {e}"))?;
+    let confirm_status = confirm_response.status();
+    if !confirm_status.is_success() {
+        let body = confirm_response.text().await.unwrap_or_default();
+        return Err(format!(
+            "Server rejected confirmation (HTTP {confirm_status}): {body}"
+        ));
+    }
+    let confirm_resp: ConfirmResponse = confirm_response
         .json()
         .await
         .map_err(|e| format!("Failed to parse confirmation: {e}"))?;

@@ -84,10 +84,16 @@ export function useCollapse(): { state: CollapseState; actions: CollapseActions 
     };
   }, [capture.isSharing, isActive, config.capture.intervalMs]);
 
-  // Auto-resume when screen sharing starts while session is paused
-  // (e.g., user clicked "Share Screen & Resume" after a reload)
+  // Auto-resume when screen sharing *starts* while session is paused
+  // (e.g., user clicked "Share Screen & Resume" after a reload).
+  // Only triggers on the false→true transition of isSharing, so that
+  // calling pause() while already sharing does not immediately re-resume.
+  const wasSharingRef = useRef(capture.isSharing);
   useEffect(() => {
-    if (capture.isSharing && session.status === "paused") {
+    const wasSharing = wasSharingRef.current;
+    wasSharingRef.current = capture.isSharing;
+
+    if (!wasSharing && capture.isSharing && session.status === "paused") {
       session.resume().then(() => {
         callbacksRef.current.onResume?.();
       }).catch(() => {});

@@ -88,19 +88,48 @@ export function useSession() {
     }, pollIntervalMs);
   }, [client, pollIntervalMs]);
 
-  const pause = useCallback(async () => {
-    const data = await client.pause();
-    setState((s) => ({
-      ...s,
-      status: data.status,
-      totalActiveSeconds: data.totalActiveSeconds,
-    }));
+  const syncStatus = useCallback(async () => {
+    try {
+      const data = await client.getStatus();
+      setState((s) => ({ ...s, status: data.status, trackedSeconds: data.trackedSeconds }));
+    } catch {
+      // Best-effort sync
+    }
   }, [client]);
 
+  const pause = useCallback(async () => {
+    try {
+      const data = await client.pause();
+      setState((s) => ({
+        ...s,
+        status: data.status,
+        totalActiveSeconds: data.totalActiveSeconds,
+      }));
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "";
+      if (msg.includes("409")) {
+        console.warn("[session] pause returned 409, syncing status");
+        await syncStatus();
+      } else {
+        throw e;
+      }
+    }
+  }, [client, syncStatus]);
+
   const resume = useCallback(async () => {
-    const data = await client.resume();
-    setState((s) => ({ ...s, status: data.status }));
-  }, [client]);
+    try {
+      const data = await client.resume();
+      setState((s) => ({ ...s, status: data.status }));
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "";
+      if (msg.includes("409")) {
+        console.warn("[session] resume returned 409, syncing status");
+        await syncStatus();
+      } else {
+        throw e;
+      }
+    }
+  }, [client, syncStatus]);
 
   const stop = useCallback(async (name?: string) => {
     // Optionally name the timelapse before stopping (non-fatal if it fails)
@@ -111,13 +140,23 @@ export function useSession() {
         console.warn("[session] rename failed (non-fatal):", e);
       }
     }
-    const data = await client.stop();
-    setState((s) => ({
-      ...s,
-      status: data.status,
-      trackedSeconds: data.trackedSeconds,
-      totalActiveSeconds: data.totalActiveSeconds,
-    }));
+    try {
+      const data = await client.stop();
+      setState((s) => ({
+        ...s,
+        status: data.status,
+        trackedSeconds: data.trackedSeconds,
+        totalActiveSeconds: data.totalActiveSeconds,
+      }));
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "";
+      if (msg.includes("409")) {
+        console.warn("[session] stop returned 409, syncing status");
+        await syncStatus();
+      } else {
+        throw e;
+      }
+    }
     startPolling();
   }, [client, startPolling]);
 
