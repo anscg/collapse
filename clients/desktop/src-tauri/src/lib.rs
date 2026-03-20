@@ -31,7 +31,7 @@ fn handle_deep_link_urls(app: &AppHandle, urls: Vec<String>) {
         .filter_map(|u| u.parse::<url::Url>().ok())
         .collect();
     if !parsed.is_empty() {
-        let _ = app.emit("deep-link://new-url", parsed);
+        let _ = app.emit("collapse-deep-link", parsed);
     }
 
     // Focus the window

@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
+import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
+import { listen } from "@tauri-apps/api/event";
 import {
   useSession,
   useSessionTimer,
@@ -46,44 +48,51 @@ export function DesktopRecorder({ token, source, onChangeSource, onBack }: Deskt
   const [pauseLoading, setPauseLoading] = useState(false);
   const [resumeLoading, setResumeLoading] = useState(false);
   const [stopLoading, setStopLoading] = useState(false);
-  const [stopAction, setStopAction] = useState<"save" | "skip" | null>(null);
-  const [showNamingPrompt, setShowNamingPrompt] = useState(false);
+  const [isPrompting, setIsPrompting] = useState(false);
   const [timelapseName, setTimelapseName] = useState("");
   const nameInputRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    if (capture.trackedSeconds > 0) {
-      session.updateTrackedSeconds(capture.trackedSeconds);
-    }
-  }, [capture.trackedSeconds, session.updateTrackedSeconds]);
-
-  // Auto-start/resume capturing once session is ready
-  const autoStarted = React.useRef(false);
-  useEffect(() => {
-    const isTransitioning = pauseLoading || resumeLoading || stopLoading;
-    if (!autoStarted.current && !capture.isCapturing && !isTransitioning) {
-      if (session.status === "active" || session.status === "pending") {
-        console.log(`[session] auto-starting capture, status: ${session.status}`);
-        autoStarted.current = true;
-        capture.startCapturing();
-      } else if (session.status === "paused") {
-        console.log("[session] auto-resuming paused session");
-        autoStarted.current = true;
-        session.resume().then(() => capture.startCapturing());
-      }
-    }
-  }, [session.status, capture.isCapturing, capture.startCapturing, pauseLoading, resumeLoading, stopLoading]);
+  const stopActionHandled = useRef(false);
 
   // Focus the name input when the naming prompt appears
   useEffect(() => {
-    if (showNamingPrompt) {
-      nameInputRef.current?.focus();
+    if (isPrompting) {
+      // Small timeout to allow the modal to render
+      setTimeout(() => nameInputRef.current?.focus(), 50);
     }
-  }, [showNamingPrompt]);
+  }, [isPrompting]);
+
+  // Finalize stop: optionally name, then stop the session.
+  const handleConfirmStop = useCallback(async (name: string | null) => {
+    if (stopActionHandled.current) return; // prevent duplicate calls
+    stopActionHandled.current = true;
+    setIsPrompting(false);
+    console.log(`[session] stopping, name: ${name?.trim() || "(none)"}`);
+    setStopLoading(true);
+    if (name && name.trim()) {
+      try {
+        await fetch(`${API_BASE}/api/sessions/${token}/name`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: name.trim() }),
+        });
+      } catch (e) {
+        console.warn("[session] rename failed (non-fatal):", e);
+      }
+    }
+    
+    try {
+      await session.stop();
+      console.log("[session] stopped, transitioning to terminal state");
+    } catch (e) {
+      console.error("[session] failed to stop session", e);
+      setStopLoading(false); // recover from error
+      stopActionHandled.current = false;
+    }
+  }, [token, session]);
 
   const handleStart = useCallback(async () => {
     await capture.startCapturing();
-  }, [capture.startCapturing]);
+  }, [capture]);
 
   const handlePause = useCallback(async () => {
     console.log("[session] pausing...");
@@ -103,33 +112,12 @@ export function DesktopRecorder({ token, source, onChangeSource, onBack }: Deskt
     setResumeLoading(false);
   }, [capture, session]);
 
-  // Stop button opens the naming prompt instead of immediately stopping
+  // Stop button opens the naming prompt in a modal instead of a separate window
   const handleStopClick = useCallback(() => {
-    console.log("[session] stop clicked, showing naming prompt");
+    console.log("[session] stop clicked, opening naming modal");
+    setIsPrompting(true);
     capture.stopCapturing();
-    setShowNamingPrompt(true);
   }, [capture]);
-
-  // Finalize stop: optionally name, then stop the session.
-  // Keep the naming prompt visible during the stop to prevent control flash.
-  const handleConfirmStop = useCallback(async (name: string | null) => {
-    console.log(`[session] stopping, name: ${name?.trim() || "(none)"}`);
-    setStopLoading(true);
-    if (name && name.trim()) {
-      try {
-        await fetch(`${API_BASE}/api/sessions/${token}/name`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ name: name.trim() }),
-        });
-      } catch (e) {
-        console.warn("[session] rename failed (non-fatal):", e);
-      }
-    }
-    await session.stop();
-    console.log("[session] stopped, transitioning to terminal state");
-    // After stop, session.status transitions to "stopped" and the terminal branch renders
-  }, [token, session]);
 
   if (session.status === "loading") {
     return (
@@ -158,7 +146,7 @@ export function DesktopRecorder({ token, source, onChangeSource, onBack }: Deskt
   // Terminal states: render inline with back button and status bar still visible
   if (["stopped", "compiling", "complete", "failed"].includes(session.status)) {
     return (
-      <PageContainer maxWidth={480} style={{ paddingTop: spacing.xl }}>
+      <PageContainer maxWidth={480} style={{ paddingTop: spacing.xl, width: "100%" }}>
         <Button variant="secondary" size="sm" onClick={onBack} style={{ marginBottom: spacing.md }}>
           &larr; Gallery
         </Button>
@@ -167,7 +155,7 @@ export function DesktopRecorder({ token, source, onChangeSource, onBack }: Deskt
           screenshotCount={session.screenshotCount + capture.screenshotCount}
           uploads={{ pending: 0, completed: 0, failed: 0 }}
         />
-        <div style={{ marginTop: spacing.lg }}>
+        <div style={{ marginTop: spacing.lg, marginLeft: -spacing.lg, marginRight: -spacing.lg }}>
           <ResultView status={session.status} trackedSeconds={session.trackedSeconds} />
         </div>
       </PageContainer>
@@ -179,9 +167,9 @@ export function DesktopRecorder({ token, source, onChangeSource, onBack }: Deskt
 
   // Pin controls to pre-action state during transitions to prevent flashes.
   let controlMode: "recording" | "paused" | "idle";
-  if (pauseLoading || (stopLoading && isActive)) {
+  if (pauseLoading || ((stopLoading || isPrompting) && isActive)) {
     controlMode = "recording";
-  } else if (resumeLoading || (stopLoading && isPaused)) {
+  } else if (resumeLoading || ((stopLoading || isPrompting) && isPaused)) {
     controlMode = "paused";
   } else if (capture.isCapturing) {
     controlMode = "recording";
@@ -201,7 +189,7 @@ export function DesktopRecorder({ token, source, onChangeSource, onBack }: Deskt
   return (
     <PageContainer maxWidth={480} style={{ paddingTop: spacing.xl }}>
       {/* Back button — only when idle (not during recording) */}
-      {!isRecording && !showNamingPrompt && (
+      {!isRecording && (
         <Button variant="secondary" size="sm" onClick={onBack} style={{ marginBottom: spacing.md }}>
           &larr; Gallery
         </Button>
@@ -252,107 +240,113 @@ export function DesktopRecorder({ token, source, onChangeSource, onBack }: Deskt
         <ErrorDisplay variant="banner" error={capture.error} onCopy={() => navigator.clipboard.writeText(getReport())} />
       )}
 
-      {showNamingPrompt ? (
-        <Card padding={spacing.xxl} style={{ textAlign: "center" }}>
-          <h3 style={{ fontSize: fontSize.xl, fontWeight: fontWeight.bold, color: colors.text.primary, margin: 0, marginBottom: spacing.sm }}>
-            Name your timelapse
-          </h3>
-          <p style={{ fontSize: fontSize.md, color: colors.text.secondary, margin: 0, marginBottom: spacing.lg }}>
-            Give it a name, or skip to use the default.
-          </p>
-          <input
-            ref={nameInputRef}
-            type="text"
-            value={timelapseName}
-            onChange={(e) => setTimelapseName(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") handleConfirmStop(timelapseName);
-            }}
-            placeholder="My timelapse"
-            maxLength={255}
-            disabled={stopLoading}
-            style={{
-              width: "100%",
-              padding: `${spacing.md}px ${spacing.lg}px`,
-              fontSize: fontSize.lg,
-              fontWeight: fontWeight.medium,
-              color: colors.text.primary,
-              background: colors.bg.sunken,
-              border: `1px solid ${colors.border.default}`,
-              borderRadius: radii.md,
-              outline: "none",
-              boxSizing: "border-box",
-              marginBottom: spacing.lg,
-              opacity: stopLoading ? 0.5 : 1,
-            }}
-          />
-          <div style={{ display: "flex", gap: spacing.md }}>
-            <Button
-              variant="primary"
-              size="lg"
-              fullWidth
-              loading={stopLoading && stopAction === "save"}
-              disabled={stopLoading}
-              onClick={() => { setStopAction("save"); handleConfirmStop(timelapseName); }}
-            >
-              Save &amp; Stop
+      <div style={{
+        display: "flex", alignItems: "center", gap: spacing.md,
+        justifyContent: "center", flexWrap: "wrap",
+      }}>
+        {controlMode === "recording" && (
+          <>
+            <div style={{
+              width: 10, height: 10, borderRadius: "50%", background: colors.status.danger,
+              animation: "pulse 1.5s ease-in-out infinite",
+            }} />
+            <span style={{ fontSize: fontSize.md, fontWeight: fontWeight.semibold, color: colors.status.danger, marginRight: spacing.sm }}>
+              Recording
+            </span>
+            <Button variant="warning" size="md" loading={pauseLoading} onClick={handlePause} disabled={stopLoading || isPrompting}>
+              Pause
             </Button>
-            <Button
-              variant="secondary"
-              size="lg"
-              fullWidth
-              loading={stopLoading && stopAction === "skip"}
-              disabled={stopLoading}
-              onClick={() => { setStopAction("skip"); handleConfirmStop(null); }}
-            >
-              Skip
+            <Button variant="danger" size="md" loading={stopLoading} onClick={handleStopClick} disabled={pauseLoading || stopLoading || isPrompting}>
+              Stop
             </Button>
-          </div>
-        </Card>
-      ) : (
+          </>
+        )}
+
+        {controlMode === "paused" && (
+          <>
+            <Button variant="primary" size="lg" loading={resumeLoading} onClick={handleResume} disabled={stopLoading || isPrompting}>
+              Resume
+            </Button>
+            <Button variant="danger" size="lg" loading={stopLoading} onClick={handleStopClick} disabled={resumeLoading || stopLoading || isPrompting}>
+              Stop Session
+            </Button>
+          </>
+        )}
+
+        {controlMode === "idle" && (
+          <>
+            <Button variant="success" size="lg" onClick={handleStart}>
+              Start Recording
+            </Button>
+            <Button variant="secondary" size="sm" onClick={onChangeSource}>
+              Change Source
+            </Button>
+          </>
+        )}
+      </div>
+
+      {isPrompting && (
         <div style={{
-          display: "flex", alignItems: "center", gap: spacing.md,
-          justifyContent: "center", flexWrap: "wrap",
+          position: "fixed", top: 0, left: 0, right: 0, bottom: 0,
+          background: "var(--color-modal-backdrop, rgba(0,0,0,0.8))",
+          display: "flex", alignItems: "center", justifyContent: "center",
+          zIndex: 9999, padding: spacing.xl,
         }}>
-          {controlMode === "recording" && (
-            <>
-              <div style={{
-                width: 10, height: 10, borderRadius: "50%", background: colors.status.danger,
-                animation: "pulse 1.5s ease-in-out infinite",
-              }} />
-              <span style={{ fontSize: fontSize.md, fontWeight: fontWeight.semibold, color: colors.status.danger, marginRight: spacing.sm }}>
-                Recording
-              </span>
-              <Button variant="warning" size="md" loading={pauseLoading} onClick={handlePause} disabled={stopLoading}>
-                Pause
+          <Card padding={spacing.xxl} style={{ width: "100%", maxWidth: 400, height: "auto", background: "var(--color-bg-panel)", textAlign: "center", boxShadow: "0 10px 40px rgba(0,0,0,0.5)" }}>
+            <h3 style={{ fontSize: fontSize.xl, fontWeight: fontWeight.bold, color: colors.text.primary, margin: 0, marginBottom: spacing.sm }}>
+              Name your timelapse
+            </h3>
+            <p style={{ fontSize: fontSize.md, color: colors.text.secondary, margin: 0, marginBottom: spacing.lg }}>
+              Give it a name, or skip to use the default.
+            </p>
+            <input
+              ref={nameInputRef}
+              type="text"
+              value={timelapseName}
+              onChange={(e) => setTimelapseName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") handleConfirmStop(timelapseName);
+              }}
+              placeholder="My timelapse"
+              maxLength={255}
+              disabled={stopLoading}
+              style={{
+                width: "100%",
+                padding: `${spacing.md}px ${spacing.lg}px`,
+                fontSize: fontSize.lg,
+                fontWeight: fontWeight.medium,
+                color: colors.text.primary,
+                background: colors.bg.sunken,
+                border: `1px solid ${colors.border.default}`,
+                borderRadius: radii.md,
+                outline: "none",
+                boxSizing: "border-box",
+                marginBottom: spacing.lg,
+                opacity: stopLoading ? 0.5 : 1,
+              }}
+            />
+            <div style={{ display: "flex", gap: spacing.md }}>
+              <Button
+                variant="primary"
+                size="lg"
+                fullWidth
+                loading={stopLoading}
+                disabled={stopLoading}
+                onClick={() => handleConfirmStop(timelapseName)}
+              >
+                Save &amp; Stop
               </Button>
-              <Button variant="danger" size="md" onClick={handleStopClick} disabled={pauseLoading}>
-                Stop
+              <Button
+                variant="secondary"
+                size="lg"
+                fullWidth
+                disabled={stopLoading}
+                onClick={() => handleConfirmStop(null)}
+              >
+                Skip
               </Button>
-            </>
-          )}
-
-          {controlMode === "paused" && (
-            <>
-              <Button variant="primary" size="lg" loading={resumeLoading} onClick={handleResume} disabled={stopLoading}>
-                Resume
-              </Button>
-              <Button variant="danger" size="lg" onClick={handleStopClick} disabled={resumeLoading}>
-                Stop Session
-              </Button>
-            </>
-          )}
-
-          {controlMode === "idle" && (
-            <>
-              <Button variant="success" size="lg" onClick={handleStart}>
-                Start Recording
-              </Button>
-              <Button variant="secondary" size="sm" onClick={onChangeSource}>
-                Change Source
-              </Button>
-            </>
-          )}
+            </div>
+          </Card>
         </div>
       )}
     </PageContainer>

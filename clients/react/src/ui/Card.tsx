@@ -1,4 +1,5 @@
 import React from "react";
+import { motion } from "motion/react";
 import { colors, radii } from "./theme.js";
 
 export interface CardProps {
@@ -9,23 +10,43 @@ export interface CardProps {
 }
 
 export function Card({ children, onClick, padding, style }: CardProps) {
-  return (
+  const content = (
     <div
-      onClick={onClick}
-      role={onClick ? "button" : undefined}
-      tabIndex={onClick ? 0 : undefined}
       style={{
         background: colors.bg.surface,
         border: `1px solid ${colors.border.default}`,
         borderRadius: radii.lg,
         overflow: "hidden",
-        cursor: onClick ? "pointer" : undefined,
-        transition: "border-color 0.15s",
         padding,
-        ...style,
+        height: "100%",
+        display: "flex",
+        flexDirection: "column",
+        ...(onClick ? {} : style),
       }}
     >
       {children}
     </div>
+  );
+
+  if (!onClick) {
+    return content;
+  }
+
+  return (
+    <motion.div
+      onClick={onClick}
+      role="button"
+      tabIndex={0}
+      whileTap={{ scale: 0.99 }}
+      transition={{ type: "spring", stiffness: 1500, damping: 60 }}
+      style={{
+        cursor: "pointer",
+        display: "block",
+        height: "100%",
+        ...style,
+      }}
+    >
+      {content}
+    </motion.div>
   );
 }

@@ -44,17 +44,16 @@ export function ErrorDisplay({ error, variant = "banner", title, onDismiss, onCo
           onClick={onCopy} 
           whileTap="active"
           initial="idle"
-          variants={{ idle: { scale: 1 }, active: { scale: 0.96 } }}
-          transition={{ type: "spring", stiffness: 400, damping: 25 }}
-          style={{ background: "none", border: "1px solid " + colors.text.error, color: colors.text.error, cursor: "pointer", fontSize: fontSize.xs, lineHeight: 1, padding: "2px 8px", borderRadius: radii.sm, whiteSpace: "nowrap" as const }}
+          style={{ background: "transparent", border: "none", color: colors.text.error, cursor: "pointer", fontSize: fontSize.xs, lineHeight: 1, padding: "2px 8px", borderRadius: radii.sm, whiteSpace: "nowrap" as const, position: "relative" }}
         >
-          <motion.span
-            variants={{ idle: { scale: 1 }, active: { scale: 1 / 0.96 } }}
-            transition={{ type: "spring", stiffness: 400, damping: 25 }}
-            style={{ display: "inline-block" }}
-          >
+          <motion.div
+            variants={{ idle: { scale: 1 }, active: { scale: 0.96 } }}
+            transition={{ type: "spring", stiffness: 1500, damping: 60 }}
+            style={{ position: "absolute", inset: 0, borderRadius: radii.sm, border: "1px solid " + colors.text.error, zIndex: 0 }}
+          />
+          <span style={{ position: "relative", zIndex: 1, display: "inline-block" }}>
             Copy
-          </motion.span>
+          </span>
         </motion.button>
       )}
       {onDismiss && (
@@ -62,17 +61,16 @@ export function ErrorDisplay({ error, variant = "banner", title, onDismiss, onCo
           onClick={onDismiss} 
           whileTap="active"
           initial="idle"
-          variants={{ idle: { scale: 1 }, active: { scale: 0.96 } }}
-          transition={{ type: "spring", stiffness: 400, damping: 25 }}
-          style={{ background: "none", border: "none", color: colors.text.error, cursor: "pointer", fontSize: fontSize.xl, lineHeight: 1, padding: 0 }}
+          style={{ background: "none", border: "none", color: colors.text.error, cursor: "pointer", fontSize: fontSize.xl, lineHeight: 1, padding: 0, position: "relative" }}
         >
-          <motion.span
-            variants={{ idle: { scale: 1 }, active: { scale: 1 / 0.96 } }}
-            transition={{ type: "spring", stiffness: 400, damping: 25 }}
-            style={{ display: "inline-block" }}
-          >
+          <motion.div
+            variants={{ idle: { scale: 1 }, active: { scale: 0.96 } }}
+            transition={{ type: "spring", stiffness: 1500, damping: 60 }}
+            style={{ position: "absolute", inset: -2, borderRadius: "50%", background: "transparent", zIndex: 0 }}
+          />
+          <span style={{ position: "relative", zIndex: 1, display: "inline-block" }}>
             &times;
-          </motion.span>
+          </span>
         </motion.button>
       )}
     </div>

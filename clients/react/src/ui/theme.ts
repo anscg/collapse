@@ -5,11 +5,14 @@ if (isBrowser) {
   style.textContent = `
     :root {
       /* Dark theme (default/fallback) */
-      --color-bg-body: transparent;
+      --color-bg-body: #000000;
+      --color-bg-panel: #111111;
+      --color-modal-backdrop: rgba(0, 0, 0, 0.8);
       --color-bg-surface: rgba(255, 255, 255, 0.05);
       --color-bg-sunken: rgba(255, 255, 255, 0.02);
       
       --color-text-primary: #ffffff;
+      --color-text-inverse: #000000;
       --color-text-secondary: rgba(255, 255, 255, 0.6);
       --color-text-tertiary: rgba(255, 255, 255, 0.4);
       --color-text-quaternary: rgba(255, 255, 255, 0.2);
@@ -35,15 +38,24 @@ if (isBrowser) {
       
       --color-badge-overlay-bg: rgba(0, 0, 0, 0.7);
       --color-badge-overlay-text: #ffffff;
+
+      --color-archive-bg: rgba(0, 0, 0, 0.6);
+      --color-archive-icon: #ffffff;
+      --color-archive-border: rgba(255, 255, 255, 0.1);
+      --color-archive-hover-bg: rgba(255, 255, 255, 0.1);
+      --color-archive-hover-border: rgba(255, 255, 255, 0.2);
     }
     
     @media (prefers-color-scheme: light) {
       :root {
-        --color-bg-body: transparent;
+        --color-bg-body: #ffffff;
+        --color-bg-panel: #ffffff;
+        --color-modal-backdrop: rgba(255, 255, 255, 0.8);
         --color-bg-surface: rgba(0, 0, 0, 0.05);
         --color-bg-sunken: rgba(0, 0, 0, 0.02);
         
         --color-text-primary: #000000;
+        --color-text-inverse: #ffffff;
         --color-text-secondary: rgba(0, 0, 0, 0.6);
         --color-text-tertiary: rgba(0, 0, 0, 0.4);
         --color-text-quaternary: rgba(0, 0, 0, 0.2);
@@ -69,6 +81,12 @@ if (isBrowser) {
 
         --color-badge-overlay-bg: #000000;
         --color-badge-overlay-text: #ffffff;
+
+        --color-archive-bg: rgba(255, 255, 255, 0.9);
+        --color-archive-icon: #000000;
+        --color-archive-border: rgba(0, 0, 0, 0.1);
+        --color-archive-hover-bg: rgba(255, 255, 255, 1);
+        --color-archive-hover-border: rgba(0, 0, 0, 0.2);
       }
     }
   `;
@@ -76,8 +94,8 @@ if (isBrowser) {
 }
 
 export const colors = {
-  bg: { body: "var(--color-bg-body)", surface: "var(--color-bg-surface)", sunken: "var(--color-bg-sunken)", selected: "var(--color-bg-selected)" },
-  text: { primary: "var(--color-text-primary)", secondary: "var(--color-text-secondary)", tertiary: "var(--color-text-tertiary)", quaternary: "var(--color-text-quaternary)", error: "var(--color-text-error)" },
+  bg: { body: "var(--color-bg-body)", panel: "var(--color-bg-panel)", backdrop: "var(--color-modal-backdrop)", surface: "var(--color-bg-surface)", sunken: "var(--color-bg-sunken)", selected: "var(--color-bg-selected)" },
+  text: { primary: "var(--color-text-primary)", inverse: "var(--color-text-inverse)", secondary: "var(--color-text-secondary)", tertiary: "var(--color-text-tertiary)", quaternary: "var(--color-text-quaternary)", error: "var(--color-text-error)" },
   border: { default: "var(--color-border-default)", hover: "var(--color-border-hover)", selected: "var(--color-border-selected)" },
   icon: { selected: "var(--color-icon-selected)" },
   spinner: { base: "var(--color-spinner-base)", track: "var(--color-spinner-track)" },

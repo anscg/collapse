@@ -1,8 +1,14 @@
 import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
+import { emit } from "@tauri-apps/api/event";
 import { createRoot } from "react-dom/client";
 import React from "react";
 import { getReport } from "./logger.js"; // side-effect: captures console, renders debug panel
 import { App } from "./App.js";
+
+// Add global debug helper for deep links
+(window as any).__simulateDeepLink = (url: string) => {
+  emit('collapse-deep-link', [url]).catch(err => console.error("Simulate deep link failed:", err));
+};
 
 // Wrap fetch so only cross-origin requests go through Tauri's HTTP plugin.
 // Keeping native fetch for same-origin/local requests avoids breaking React internals.

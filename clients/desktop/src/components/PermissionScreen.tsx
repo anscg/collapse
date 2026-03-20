@@ -86,9 +86,9 @@ export function PermissionScreen({ onGranted }: { onGranted: () => void }) {
           fullWidth
           onClick={handleRequest}
           style={{
-            borderRadius: 999,
+            borderRadius: 9999,
             background: colors.text.primary,
-            color: "var(--color-bg-body, #000)", // Inverse text color for primary button
+            color: colors.text.inverse,
             border: "none",
             fontWeight: 600,
           }}
@@ -101,7 +101,7 @@ export function PermissionScreen({ onGranted }: { onGranted: () => void }) {
           onClick={onGranted}
           style={{
             marginTop: spacing.xl,
-            borderRadius: 999,
+            borderRadius: 9999,
             background: colors.bg.surface,
             color: colors.text.secondary,
             border: "none",

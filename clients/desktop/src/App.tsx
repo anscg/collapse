@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from "react";
-import { onOpenUrl } from "@tauri-apps/plugin-deep-link";
+import { listen } from "@tauri-apps/api/event";
+import { confirm } from "@tauri-apps/plugin-dialog";
 import { invoke } from "./logger.js";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
@@ -94,13 +95,16 @@ export function App() {
   handleDeepLinkRef.current = handleDeepLinkUrls;
 
   // Listen for deep links while app is running (warm start).
-  // Use the ref so this effect never re-subscribes — onOpenUrl creates a
-  // Tauri event listener and the async cleanup can race with re-subscription.
+  // We use our custom "collapse-deep-link" event to avoid conflicts and infinite loops
+  // with the tauri-plugin-deep-link internal event loops.
   useEffect(() => {
-    const unlistenPlugin = onOpenUrl((urls) => {
-      handleDeepLinkRef.current(urls);
+    let unlisten: (() => void) | undefined;
+    listen<string[]>("collapse-deep-link", (event) => {
+      handleDeepLinkRef.current(event.payload);
+    }).then((fn) => {
+      unlisten = fn;
     });
-    return () => { unlistenPlugin.then((fn) => fn()); };
+    return () => { if (unlisten) unlisten(); };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -193,9 +197,12 @@ export function App() {
                 navigate({ page: "session", token });
               }
             }}
-            onArchive={(token) => {
-              tokenStore.archiveToken(token);
-              gallery.refresh();
+            onArchive={async (token) => {
+              const yes = await confirm("Are you sure you want to archive this session?", { title: "Archive Session", kind: "warning" });
+              if (yes) {
+                tokenStore.archiveToken(token);
+                gallery.refresh();
+              }
             }}
             onRefresh={gallery.refresh}
           />
@@ -222,9 +229,12 @@ export function App() {
             token={route.token}
             apiBaseUrl={API_BASE}
             onBack={() => navigate({ page: "gallery" })}
-            onArchive={() => {
-              tokenStore.archiveToken(route.token);
-              navigate({ page: "gallery" });
+            onArchive={async () => {
+              const yes = await confirm("Are you sure you want to archive this session?", { title: "Archive Session", kind: "warning" });
+              if (yes) {
+                tokenStore.archiveToken(route.token);
+                navigate({ page: "gallery" });
+              }
             }}
           />
         );

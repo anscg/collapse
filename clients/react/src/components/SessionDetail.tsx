@@ -119,7 +119,7 @@ export function SessionDetail({
       {status && (
         <>
           {/* Video area */}
-          <div style={{ marginBottom: spacing.lg }}>
+          <div style={{ marginBottom: spacing.lg, marginLeft: -spacing.lg, marginRight: -spacing.lg }}>
             <ProcessingState
               status={status.status}
               trackedSeconds={status.trackedSeconds}

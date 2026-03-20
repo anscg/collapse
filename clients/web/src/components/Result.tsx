@@ -79,7 +79,7 @@ export function Result({ status, trackedSeconds }: ResultProps) {
 
 const styles: Record<string, React.CSSProperties> = {
   container: {
-    maxWidth: 800,
+    width: "100%",
     margin: "40px auto",
     padding: 24,
     textAlign: "center",
@@ -97,7 +97,6 @@ const styles: Record<string, React.CSSProperties> = {
   },
   video: {
     width: "100%",
-    maxWidth: 800,
     borderRadius: 8,
     background: "#000",
   },

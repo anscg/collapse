@@ -56,7 +56,7 @@ export function CollapseRecorder() {
     state.status === "failed"
   ) {
     return (
-      <PageContainer maxWidth={800} style={{ padding: spacing.xxl }}>
+      <PageContainer style={{ padding: spacing.xxl }}>
         <ProcessingState
           status={state.status}
           trackedSeconds={state.trackedSeconds}

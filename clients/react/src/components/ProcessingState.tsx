@@ -13,7 +13,8 @@ export interface ProcessingStateProps {
 
 export function ProcessingState({ status, trackedSeconds, videoUrl, error, onVideoLoaded }: ProcessingStateProps) {
   const containerStyle: React.CSSProperties = {
-    borderRadius: radii.lg,
+    width: "100%",
+    borderRadius: 0,
     overflow: "hidden",
     background: colors.bg.sunken,
     aspectRatio: "16/9",
@@ -26,7 +27,7 @@ export function ProcessingState({ status, trackedSeconds, videoUrl, error, onVid
 
   if (status === "complete" && videoUrl) {
     return (
-      <div style={{ borderRadius: radii.lg, overflow: "hidden", background: colors.bg.sunken, aspectRatio: "16/9" }}>
+      <div style={{ width: "100%", borderRadius: 0, overflow: "hidden", background: colors.bg.sunken, aspectRatio: "16/9" }}>
         <video src={videoUrl} controls autoPlay={false} style={{ width: "100%", height: "100%", display: "block" }} />
       </div>
     );
