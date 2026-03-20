@@ -16,9 +16,9 @@
         "title": "Collapse",
         "width": 480,
         "height": 640,
-        "resizable": true,
-        "minWidth": 400,
-        "minHeight": 500
+        "resizable": false,
+        "fullscreen": false,
+        "maximizable": false
       }
     ],
     "security": {
