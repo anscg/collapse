@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { onOpenUrl } from "@tauri-apps/plugin-deep-link";
 import { invoke } from "./logger.js";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   Gallery,
   SessionDetail,
@@ -99,61 +100,110 @@ export function App() {
     }
   }, []);
 
-  // Step 1: Permission check (macOS)
-  if (!permissionGranted) {
-    return <PermissionScreen onGranted={() => setPermissionGranted(true)} />;
-  }
+  // Enable vibrancy globally for the app
+  useEffect(() => {
+    const html = document.documentElement;
+    const body = document.body;
+    const root = document.getElementById("root");
+    const prevHtmlBg = html.style.background;
+    const prevBodyBg = body.style.background;
+    const prevRootBg = root?.style.background ?? "";
+
+    let effectsApplied = false;
+    
+    invoke("enable_vibrancy")
+      .then(() => {
+        effectsApplied = true;
+        html.style.background = "transparent";
+        body.style.background = "transparent";
+        if (root) root.style.background = "transparent";
+      })
+      .catch((err) => {
+        console.warn("Failed to enable vibrancy", err);
+      });
+
+    return () => {
+      if (effectsApplied) {
+        invoke("disable_vibrancy").catch(() => {});
+      }
+      html.style.background = prevHtmlBg;
+      body.style.background = prevBodyBg;
+      if (root) root.style.background = prevRootBg;
+    };
+  }, []);
 
   // Step 2: Route
-  switch (route.page) {
-    case "gallery":
-      return (
-        <Gallery
-          sessions={gallery.sessions}
-          loading={gallery.loading}
-          error={gallery.error}
-          onSessionClick={(token) => {
-            const session = gallery.sessions.find((s) => s.token === token);
-            if (session && ["pending", "active", "paused"].includes(session.status)) {
-              navigate({ page: "record", token });
-            } else {
+  const content = (() => {
+    switch (route.page) {
+      case "gallery":
+        return (
+          <Gallery
+            sessions={gallery.sessions}
+            loading={gallery.loading}
+            error={gallery.error}
+            onSessionClick={(token) => {
+              const session = gallery.sessions.find((s) => s.token === token);
+              if (session && ["pending", "active", "paused"].includes(session.status)) {
+                navigate({ page: "record", token });
+              } else {
+                navigate({ page: "session", token });
+              }
+            }}
+            onArchive={(token) => {
+              tokenStore.archiveToken(token);
+              gallery.refresh();
+            }}
+            onRefresh={gallery.refresh}
+          />
+        );
+      case "record":
+        return (
+          <RecordPage
+            token={route.token}
+            onBack={() => {
+              gallery.refresh();
+              navigate({ page: "gallery" });
+            }}
+            onViewSession={(token) => {
+              tokenStore.addToken(token);
               navigate({ page: "session", token });
-            }
-          }}
-          onArchive={(token) => {
-            tokenStore.archiveToken(token);
-            gallery.refresh();
-          }}
-          onRefresh={gallery.refresh}
-        />
-      );
+            }}
+          />
+        );
+      case "session":
+        return (
+          <SessionDetail
+            token={route.token}
+            apiBaseUrl={API_BASE}
+            onBack={() => navigate({ page: "gallery" })}
+            onArchive={() => {
+              tokenStore.archiveToken(route.token);
+              navigate({ page: "gallery" });
+            }}
+          />
+        );
+      default:
+        return null;
+    }
+  })();
 
-    case "record":
-      return (
-        <RecordPage
-          token={route.token}
-          onBack={() => {
-            gallery.refresh();
-            navigate({ page: "gallery" });
-          }}
-          onViewSession={(token) => {
-            tokenStore.addToken(token);
-            navigate({ page: "session", token });
-          }}
-        />
-      );
+  const mainView = !permissionGranted ? (
+    <PermissionScreen onGranted={() => setPermissionGranted(true)} />
+  ) : (
+    content
+  );
 
-    case "session":
-      return (
-        <SessionDetail
-          token={route.token}
-          apiBaseUrl={API_BASE}
-          onBack={() => navigate({ page: "gallery" })}
-          onArchive={() => {
-            tokenStore.archiveToken(route.token);
-            navigate({ page: "gallery" });
-          }}
-        />
-      );
-  }
+  return (
+    <div style={{ display: "flex", flexDirection: "column", height: "100vh" }}>
+      {/* Draggable Titlebar Area that dodges the traffic lights */}
+      <div 
+        data-tauri-drag-region 
+        className="titlebar"
+        style={{ height: 32, flexShrink: 0, width: "100%", zIndex: 9999, background: "transparent", cursor: "default" }} 
+      />
+      <div style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column" }}>
+        {mainView}
+      </div>
+    </div>
+  );
 }

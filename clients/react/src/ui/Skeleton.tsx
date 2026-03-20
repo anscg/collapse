@@ -26,7 +26,7 @@ export function Skeleton({ width, height, borderRadius = radii.md, aspectRatio, 
 
 export function GallerySkeleton() {
   return (
-    <div style={{ maxWidth: 640, margin: "0 auto", padding: spacing.lg }}>
+    <div style={{ padding: spacing.lg }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: spacing.lg }}>
         <Skeleton width={180} height={24} />
         <Skeleton width={36} height={36} borderRadius={radii.sm} />

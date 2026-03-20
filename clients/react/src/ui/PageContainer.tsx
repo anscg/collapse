@@ -19,7 +19,8 @@ export function PageContainer({ children, maxWidth = 640, centered = false, styl
         flexDirection: "column" as const,
         alignItems: "center",
         justifyContent: "center",
-        minHeight: "100vh",
+        minHeight: "100%",
+        flex: 1,
       } : {}),
       ...style,
     }}>

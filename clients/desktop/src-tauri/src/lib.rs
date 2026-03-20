@@ -5,7 +5,6 @@ use std::sync::Mutex;
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_deep_link::DeepLinkExt;
 
-
 /// App state shared across commands.
 pub struct AppState {
     pub config: Mutex<Option<SessionConfig>>,
@@ -107,7 +106,10 @@ pub struct CaptureUploadResult {
 /// Return the deep link URLs from cold start (if any), then clear them.
 #[tauri::command]
 fn get_cold_start_urls(state: State<'_, AppState>) -> Vec<String> {
-    let mut urls = state.cold_start_urls.lock().unwrap_or_else(|e| e.into_inner());
+    let mut urls = state
+        .cold_start_urls
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     urls.take().unwrap_or_default()
 }
 
@@ -142,9 +144,15 @@ fn list_capture_sources() -> Result<CaptureSourceList, String> {
             let width = w.width().ok()?;
             let height = w.height().ok()?;
             // Filter out tiny/invisible windows and our own app
-            if width < 50 || height < 50 { return None; }
-            if title.is_empty() && app_name.is_empty() { return None; }
-            if app_name == "Collapse" { return None; }
+            if width < 50 || height < 50 {
+                return None;
+            }
+            if title.is_empty() && app_name.is_empty() {
+                return None;
+            }
+            if app_name == "Collapse" {
+                return None;
+            }
             Some(WindowInfo {
                 id: w.id().ok()?,
                 app_name,
@@ -160,11 +168,54 @@ fn list_capture_sources() -> Result<CaptureSourceList, String> {
     Ok(CaptureSourceList { monitors, windows })
 }
 
+#[tauri::command]
+fn enable_vibrancy(window: tauri::Window) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        use window_vibrancy::{apply_vibrancy, NSVisualEffectMaterial, NSVisualEffectState};
+        apply_vibrancy(
+            &window,
+            NSVisualEffectMaterial::Sidebar,
+            Some(NSVisualEffectState::Active),
+            Some(16.0),
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    #[cfg(target_os = "windows")]
+    {
+        use window_vibrancy::apply_blur;
+        apply_blur(&window, Some((18, 18, 18, 125))).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn disable_vibrancy(window: tauri::Window) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        use window_vibrancy::clear_vibrancy;
+        clear_vibrancy(&window).map_err(|e| e.to_string())?;
+    }
+    #[cfg(target_os = "windows")]
+    {
+        use window_vibrancy::clear_blur;
+        clear_blur(&window).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 /// Initialize the session config so Rust knows where the server is.
 #[tauri::command]
-fn configure(token: String, api_base_url: String, state: State<'_, AppState>) -> Result<(), String> {
+fn configure(
+    token: String,
+    api_base_url: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
     let mut config = state.config.lock().map_err(|e| e.to_string())?;
-    *config = Some(SessionConfig { token, api_base_url });
+    *config = Some(SessionConfig {
+        token,
+        api_base_url,
+    });
     Ok(())
 }
 
@@ -193,7 +244,9 @@ async fn capture_and_upload(
 ) -> Result<CaptureUploadResult, String> {
     let config = {
         let guard = state.config.lock().map_err(|e| e.to_string())?;
-        guard.clone().ok_or("Not configured — call configure() first")?
+        guard
+            .clone()
+            .ok_or("Not configured — call configure() first")?
     };
 
     // Step 1: Native screenshot
@@ -226,7 +279,10 @@ async fn capture_and_upload(
         .map_err(|e| format!("Failed to parse upload URL response: {e}"))?;
     let _ = app.emit(
         "capture-progress",
-        format!("got upload url, screenshot id: {}", upload_url_resp.screenshot_id),
+        format!(
+            "got upload url, screenshot id: {}",
+            upload_url_resp.screenshot_id
+        ),
     );
 
     // Step 3: Upload JPEG to R2
@@ -285,7 +341,9 @@ async fn capture_and_upload(
 
 fn base64_decode(b64: &str) -> Result<Vec<u8>, String> {
     use base64_engine::*;
-    ENGINE.decode(b64).map_err(|e| format!("Base64 decode failed: {e}"))
+    ENGINE
+        .decode(b64)
+        .map_err(|e| format!("Base64 decode failed: {e}"))
 }
 
 mod base64_engine {
@@ -318,9 +376,12 @@ pub fn run() {
             }
         }))
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_macos_permissions::init())
+        .plugin(tauri_plugin_opener::init())
         .manage(AppState {
             config: Mutex::new(None),
             cold_start_urls: Mutex::new(None),
@@ -331,8 +392,87 @@ pub fn run() {
             take_screenshot,
             capture_and_upload,
             get_cold_start_urls,
+            enable_vibrancy,
+            disable_vibrancy,
         ])
         .setup(|app| {
+            #[cfg(target_os = "macos")]
+            {
+                use tauri::menu::{AboutMetadata, Menu, MenuItem, PredefinedMenuItem, Submenu};
+
+                let app_menu = Submenu::with_items(
+                    app,
+                    "Collapse",
+                    true,
+                    &[
+                        &PredefinedMenuItem::about(
+                            app,
+                            Some("About Collapse"),
+                            Some(AboutMetadata {
+                                name: Some("Collapse".to_string()),
+                                version: Some("0.0.8".to_string()),
+                                authors: Some(vec!["Hack Club".to_string()]),
+                                copyright: Some("© 2026 Hack Club, A 501(c)(3) nonprofit project for student makers.".to_string()),
+                                license: Some("MIT".to_string()),
+                                website: Some("https://fallout.hackclub.com".to_string()),
+                                website_label: Some("Hack Club Fallout".to_string()),
+                                ..Default::default()
+                            }),
+                        )?,
+                        &PredefinedMenuItem::separator(app)?,
+                        &PredefinedMenuItem::services(app, None)?,
+                        &PredefinedMenuItem::separator(app)?,
+                        &PredefinedMenuItem::hide(app, Some("Hide Collapse"))?,
+                        &PredefinedMenuItem::hide_others(app, None)?,
+                        &PredefinedMenuItem::show_all(app, None)?,
+                        &PredefinedMenuItem::separator(app)?,
+                        &PredefinedMenuItem::quit(app, Some("Quit Collapse"))?,
+                    ],
+                )?;
+
+                let window_menu = Submenu::with_items(
+                    app,
+                    "Window",
+                    true,
+                    &[
+                        &PredefinedMenuItem::minimize(app, None)?,
+                        &PredefinedMenuItem::maximize(app, None)?,
+                        &PredefinedMenuItem::separator(app)?,
+                        &PredefinedMenuItem::close_window(app, None)?,
+                    ],
+                )?;
+
+                let docs_item = MenuItem::with_id(app, "docs", "Fallout Docs", true, None::<&str>)?;
+                let guide_item = MenuItem::with_id(app, "guide", "How to Timelapse?", true, None::<&str>)?;
+                let gh_item = MenuItem::with_id(app, "github", "GitHub Repo", true, None::<&str>)?;
+                let help_menu = Submenu::with_items(app, "Help", true, &[&docs_item, &guide_item, &gh_item])?;
+
+                let menu = Menu::with_items(app, &[&app_menu, &window_menu, &help_menu])?;
+                app.set_menu(menu)?;
+
+                app.on_menu_event(move |app_handle, event| {
+                    if event.id().0 == "docs" {
+                        use tauri_plugin_opener::OpenerExt;
+                        let _ = app_handle
+                            .opener()
+                            .open_url("https://fallout.hackclub.com/docs", None::<&str>);
+                    }
+                    if event.id().0 == "guide" {
+                        use tauri_plugin_opener::OpenerExt;
+                        let _ = app_handle
+                            .opener()
+                            .open_url("https://fallout.hackclub.com/docs/project-resources/how-to-timelapse", None::<&str>);
+                    }
+                    if event.id().0 == "github" {
+                        use tauri_plugin_opener::OpenerExt;
+                        let _ = app_handle
+                            .opener()
+                            .open_url("https://github.com/hackclub/collapse/", None::<&str>);
+                    }
+                });
+
+            }
+
             // On Windows/Linux, ensure the collapse:// protocol handler is
             // registered even if the installer didn't do it (dev builds,
             // portable installs, AppImages).

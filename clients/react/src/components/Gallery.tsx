@@ -29,7 +29,7 @@ export function Gallery({
 
   if (error && sessions.length === 0) {
     return (
-      <div style={{ maxWidth: 640, margin: "0 auto", padding: spacing.lg }}>
+      <div style={{ padding: spacing.lg }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: spacing.lg }}>
           <h2 style={{ fontSize: fontSize.heading, fontWeight: fontWeight.bold, color: colors.text.primary, margin: 0 }}>Your Timelapses</h2>
         </div>
@@ -47,20 +47,20 @@ export function Gallery({
 
   if (sessions.length === 0) {
     return (
-      <div style={{ maxWidth: 640, margin: "0 auto", padding: spacing.lg }}>
+      <div style={{ padding: spacing.lg }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: spacing.lg }}>
           <h2 style={{ fontSize: fontSize.heading, fontWeight: fontWeight.bold, color: colors.text.primary, margin: 0 }}>Your Timelapses</h2>
         </div>
         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: 300, padding: spacing.xxl }}>
           <p style={{ marginBottom: spacing.md }}>
-            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke={colors.border.hover} strokeWidth="1.5">
+            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke={colors.text.primary} strokeWidth="1.5" style={{ opacity: 0.2 }}>
               <rect x="2" y="3" width="20" height="14" rx="2" ry="2" />
               <line x1="8" y1="21" x2="16" y2="21" />
               <line x1="12" y1="17" x2="12" y2="21" />
             </svg>
           </p>
-          <p style={{ fontSize: fontSize.lg, color: colors.text.secondary, textAlign: "center" }}>No timelapses yet</p>
-          <p style={{ fontSize: fontSize.sm, color: colors.text.quaternary, marginTop: spacing.xs, textAlign: "center" }}>
+          <p style={{ fontSize: fontSize.lg, color: colors.text.primary, opacity: 0.5, textAlign: "center" }}>No timelapses yet</p>
+          <p style={{ fontSize: fontSize.sm, color: colors.text.primary, opacity: 0.3, marginTop: spacing.xs, textAlign: "center" }}>
             Start a recording session to see it here.
           </p>
         </div>
@@ -69,7 +69,7 @@ export function Gallery({
   }
 
   return (
-    <div style={{ maxWidth: 640, margin: "0 auto", padding: spacing.lg }}>
+    <div style={{ padding: spacing.lg }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: spacing.lg }}>
         <h2 style={{ fontSize: fontSize.heading, fontWeight: fontWeight.bold, color: colors.text.primary, margin: 0 }}>Your Timelapses</h2>
         {onRefresh && (
