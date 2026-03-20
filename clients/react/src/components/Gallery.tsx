@@ -29,11 +29,11 @@ export function Gallery({
 
   if (error && sessions.length === 0) {
     return (
-      <div style={{ padding: spacing.lg }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: spacing.lg }}>
+      <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: spacing.lg, paddingBottom: 0, flexShrink: 0 }}>
           <h2 style={{ fontSize: fontSize.heading, fontWeight: fontWeight.bold, color: colors.text.primary, margin: 0 }}>Your Timelapses</h2>
         </div>
-        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: 300, padding: spacing.xxl }}>
+        <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: spacing.xxl }}>
           <ErrorDisplay error={error} variant="inline" />
           {onRefresh && (
             <Button variant="primary" size="md" onClick={onRefresh} style={{ marginTop: spacing.md }}>
@@ -47,11 +47,11 @@ export function Gallery({
 
   if (sessions.length === 0) {
     return (
-      <div style={{ padding: spacing.lg }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: spacing.lg }}>
+      <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: spacing.lg, paddingBottom: 0, flexShrink: 0 }}>
           <h2 style={{ fontSize: fontSize.heading, fontWeight: fontWeight.bold, color: colors.text.primary, margin: 0 }}>Your Timelapses</h2>
         </div>
-        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: 300, padding: spacing.xxl }}>
+        <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: spacing.xxl }}>
           <p style={{ marginBottom: spacing.md }}>
             <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke={colors.text.primary} strokeWidth="1.5" style={{ opacity: 0.2 }}>
               <rect x="2" y="3" width="20" height="14" rx="2" ry="2" />
@@ -69,8 +69,9 @@ export function Gallery({
   }
 
   return (
-    <div style={{ padding: spacing.lg }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: spacing.lg }}>
+    <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
+      {/* Fixed Header */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: spacing.lg, paddingBottom: 0, flexShrink: 0 }}>
         <h2 style={{ fontSize: fontSize.heading, fontWeight: fontWeight.bold, color: colors.text.primary, margin: 0 }}>Your Timelapses</h2>
         {onRefresh && (
           <Button variant="ghost" size="sm" onClick={onRefresh} title="Refresh" style={{ fontSize: fontSize.xxl }}>
@@ -78,15 +79,25 @@ export function Gallery({
           </Button>
         )}
       </div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: spacing.md }}>
-        {sessions.map((s) => (
-          <SessionCard
-            key={s.token}
-            session={s}
-            onClick={() => onSessionClick?.(s.token)}
-            onArchive={onArchive ? () => onArchive(s.token) : undefined}
-          />
-        ))}
+
+      {/* Scrollable Container with Mask */}
+      <div style={{ 
+        flex: 1, 
+        overflowY: "auto", 
+        padding: spacing.lg, 
+        maskImage: "linear-gradient(to bottom, transparent 0%, black 20px, black calc(100% - 20px), transparent 100%)",
+        WebkitMaskImage: "linear-gradient(to bottom, transparent 0%, black 20px, black calc(100% - 20px), transparent 100%)",
+      }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: spacing.md }}>
+          {sessions.map((s) => (
+            <SessionCard
+              key={s.token}
+              session={s}
+              onClick={() => onSessionClick?.(s.token)}
+              onArchive={onArchive ? () => onArchive(s.token) : undefined}
+            />
+          ))}
+        </div>
       </div>
     </div>
   );

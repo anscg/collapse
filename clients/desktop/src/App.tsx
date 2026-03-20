@@ -219,13 +219,9 @@ export function App() {
       )}
       <div style={{
         flex: 1,
-        overflowY: "auto",
+        overflowY: route.page === "gallery" ? "hidden" : "auto",
         display: "flex",
         flexDirection: "column",
-        // Fade out the top and bottom of the scrolling list using a CSS mask
-        // Starts fully opaque at 20px, stays opaque until the bottom, then fades out
-        maskImage: route.page === "gallery" ? "linear-gradient(to bottom, transparent 0%, black 20px, black calc(100% - 20px), transparent 100%)" : "none",
-        WebkitMaskImage: route.page === "gallery" ? "linear-gradient(to bottom, transparent 0%, black 20px, black calc(100% - 20px), transparent 100%)" : "none",
       }}>
         {mainView}
       </div>
