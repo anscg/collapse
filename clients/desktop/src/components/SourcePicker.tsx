@@ -40,7 +40,7 @@ interface CaptureSourceList {
 }
 
 interface SourcePickerProps {
-  onSelect: (source: CaptureSource) => void;
+  onSelect: (source: CaptureSource | CaptureSource[]) => void;
   submitLabel?: string;
 }
 
@@ -49,11 +49,63 @@ function sourcesEqual(a: CaptureSource | null, b: CaptureSource | null): boolean
   return a.type === b.type && a.id === b.id;
 }
 
+function PreviewImage({ 
+  source, 
+  isMulti, 
+  layoutId,
+  isWindow,
+  fallbackUrl
+}: { 
+  source: CaptureSource, 
+  isMulti: boolean, 
+  layoutId?: string,
+  isWindow: boolean,
+  fallbackUrl?: string | null
+}) {
+  const { previewUrl } = useScreenPreview(source, 1500);
+  const finalUrl = previewUrl || fallbackUrl;
+
+  if (!finalUrl) {
+    return (
+      <motion.div layout style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", height: "100%", minWidth: 0 }}>
+         <Spinner size="sm" />
+      </motion.div>
+    );
+  }
+
+  return (
+    <motion.img
+      layout
+      src={finalUrl}
+      alt="Preview"
+      layoutId={layoutId}
+      initial={{ opacity: 0, scale: isWindow ? 1.08 : 1.02 }}
+      animate={{ opacity: 1, scale: 1 }}
+      exit={{ opacity: 0, scale: 0.98 }}
+      transition={{
+        opacity: { duration: 0.22, ease: "easeOut" },
+        scale: { type: "spring", stiffness: 360, damping: 32, mass: 0.7 },
+        layout: { type: "spring", stiffness: 420, damping: 34, mass: 0.75 },
+      }}
+      style={{
+        flex: isMulti ? 1 : undefined,
+        width: "100%",
+        height: "100%",
+        objectFit: isMulti ? "cover" : "contain",
+        display: "block",
+        minWidth: 0, // prevents flex overflow
+        position: isMulti ? "relative" : "absolute",
+        inset: isMulti ? undefined : 0,
+      }}
+    />
+  );
+}
+
 export function SourcePicker({ onSelect, submitLabel = "Start Capture" }: SourcePickerProps) {
   const [sources, setSources] = useState<CaptureSourceList | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<"screens" | "windows">("screens");
-  const [selected, setSelected] = useState<CaptureSource | null>(null);
+  const [selected, setSelected] = useState<CaptureSource[]>([]);
   const [hoveredWindow, setHoveredWindow] = useState<CaptureSource | null>(null);
   const [hoverAspectRatio, setHoverAspectRatio] = useState(16 / 9);
 
@@ -68,8 +120,6 @@ export function SourcePicker({ onSelect, submitLabel = "Start Capture" }: Source
     setShowBottomMask(Math.ceil(scrollTop + clientHeight) < scrollHeight);
   }, []);
 
-  // Live preview of currently selected source
-  const { previewUrl } = useScreenPreview(selected, 1500);
   const { previewUrl: hoverPreviewUrl } = useScreenPreview(hoveredWindow, 1200, false);
 
   const refresh = useCallback(async () => {
@@ -83,11 +133,11 @@ export function SourcePicker({ onSelect, submitLabel = "Start Capture" }: Source
       setTimeout(handleScroll, 10);
 
       // Auto-select primary monitor if nothing selected yet
-      if (!selected) {
+      if (selected.length === 0) {
         const primary = result.monitors.find((m) => m.isPrimary) ?? result.monitors[0];
         if (primary) {
           console.log(`[sources] auto-selected: monitor id=${primary.id} (${primary.name})`);
-          setSelected({ type: "monitor", id: primary.id });
+          setSelected([{ type: "monitor", id: primary.id }]);
         }
       }
     } catch (err) {
@@ -95,7 +145,7 @@ export function SourcePicker({ onSelect, submitLabel = "Start Capture" }: Source
       console.error(`[sources] failed to list sources: ${msg}`);
       setError(msg);
     }
-  }, [selected]);
+  }, [selected.length, handleScroll]);
 
   useEffect(() => { refresh(); }, [refresh]);
 
@@ -104,6 +154,27 @@ export function SourcePicker({ onSelect, submitLabel = "Start Capture" }: Source
     window.addEventListener('resize', handleScroll);
     return () => window.removeEventListener('resize', handleScroll);
   }, [tab, sources, handleScroll]);
+
+  const handleSelect = (src: CaptureSource, shiftKey: boolean) => {
+    if (shiftKey) {
+      setSelected(prev => {
+        // Enforce same type: only allow multiple selection of the same type (either all monitors or all windows)
+        if (prev.length > 0 && prev[0].type !== src.type) {
+          // If they shift-click a different type, we just replace the whole selection with the new item
+          return [src];
+        }
+        
+        const exists = prev.some(p => sourcesEqual(p, src));
+        if (exists) {
+          return prev.filter(p => !sourcesEqual(p, src));
+        } else {
+          return [...prev, src];
+        }
+      });
+    } else {
+      setSelected([src]);
+    }
+  };
 
   if (error) {
     return (
@@ -136,19 +207,9 @@ export function SourcePicker({ onSelect, submitLabel = "Start Capture" }: Source
   }
 
   const hasWindows = sources.windows.length > 0;
-  const hoverMatchesSelected = !!hoveredWindow && sourcesEqual(hoveredWindow, selected);
-  const showHoverPreview = tab === "windows" && hoveredWindow && !hoverMatchesSelected;
-  const selectedIsWindow = selected?.type === "window";
-  const selectedKey = selected ? `${selected.type}:${selected.id}` : "preview-empty";
-  const selectedHandoffLayoutId =
-    hoverMatchesSelected && selected?.type === "window"
-      ? `hover-to-main-preview-${selected.id}`
-      : undefined;
-  const hoveredHandoffLayoutId =
-    hoveredWindow?.type === "window" ? `hover-to-main-preview-${hoveredWindow.id}` : undefined;
-  const previewSrc = selectedIsWindow && hoverMatchesSelected
-    ? (hoverPreviewUrl ?? previewUrl)
-    : (previewUrl ?? null);
+  const isSingleSelected = selected.length === 1;
+  const isHoveredAlreadySelected = !!hoveredWindow && selected.some(s => sourcesEqual(s, hoveredWindow));
+  const showHoverPreview = tab === "windows" && hoveredWindow && !isHoveredAlreadySelected;
 
   return (
     <div style={{
@@ -172,44 +233,40 @@ export function SourcePicker({ onSelect, submitLabel = "Start Capture" }: Source
           border: `1px solid ${colors.border.default}`, marginBottom: spacing.lg, aspectRatio: "16/9",
         }}>
           <LayoutGroup id="preview-handoff">
-            <AnimatePresence mode="sync" initial={false}>
-              {previewSrc ? (
-                <motion.img
-                  key={selectedKey}
-                  src={previewSrc}
-                  alt="Preview"
-                  layoutId={selectedHandoffLayoutId}
-                  initial={{ opacity: 0, scale: selectedIsWindow ? 1.08 : 1.02 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  exit={{ opacity: 0, scale: 0.98 }}
-                  transition={{
-                    opacity: { duration: 0.22, ease: "easeOut" },
-                    scale: { type: "spring", stiffness: 360, damping: 32, mass: 0.7 },
-                    layout: { type: "spring", stiffness: 420, damping: 34, mass: 0.75 },
-                  }}
-                  style={{
-                    width: "100%",
-                    height: "100%",
-                    objectFit: "contain",
-                    display: "block",
-                    position: "absolute",
-                    inset: 0,
-                  }}
-                />
-              ) : (
-                <motion.div
-                  key="preview-empty"
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  exit={{ opacity: 0 }}
-                  style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}
-                >
-                  <p style={{ fontSize: fontSize.md, color: colors.text.quaternary, textAlign: "center" }}>
-                    {selected ? "Capturing preview..." : "Select a source below"}
-                  </p>
-                </motion.div>
-              )}
-            </AnimatePresence>
+            <div style={{ width: "100%", height: "100%", display: "flex", flexDirection: "row", overflow: "hidden", position: "absolute", inset: 0, gap: selected.length > 1 ? spacing.xs : 0 }}>
+              <AnimatePresence mode="popLayout" initial={false}>
+                {selected.length > 0 ? (
+                  selected.map((src) => {
+                    const isWindow = src.type === "window";
+                    // If this item is currently hovered, we can use the hover preview as a fast initial render
+                    const isHoverMatch = !!hoveredWindow && sourcesEqual(hoveredWindow, src);
+                    const handoffLayoutId = isWindow && isHoverMatch ? `hover-to-main-preview-${src.id}` : undefined;
+                    return (
+                      <PreviewImage 
+                        key={`${src.type}:${src.id}`} 
+                        source={src} 
+                        isMulti={selected.length > 1} 
+                        layoutId={handoffLayoutId}
+                        isWindow={isWindow}
+                        fallbackUrl={isHoverMatch ? hoverPreviewUrl : null}
+                      />
+                    );
+                  })
+                ) : (
+                  <motion.div
+                    key="preview-empty"
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}
+                  >
+                    <p style={{ fontSize: fontSize.md, color: colors.text.quaternary, textAlign: "center" }}>
+                      Select a source below
+                    </p>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
 
             <AnimatePresence>
               {showHoverPreview && (
@@ -239,7 +296,7 @@ export function SourcePicker({ onSelect, submitLabel = "Start Capture" }: Source
                     <motion.img
                       src={hoverPreviewUrl}
                       alt="Window hover preview"
-                      layoutId={hoveredHandoffLayoutId}
+                      layoutId={`hover-to-main-preview-${hoveredWindow.id}`}
                       style={{ width: "100%", height: "100%", objectFit: "contain", display: "block" }}
                     />
                   ) : (
@@ -334,7 +391,7 @@ export function SourcePicker({ onSelect, submitLabel = "Start Capture" }: Source
         {(tab === "screens" || !hasWindows) &&
           sources.monitors.map((m) => {
             const src: CaptureSource = { type: "monitor", id: m.id };
-            const isSelected = sourcesEqual(selected, src);
+            const isSelected = selected.some(p => sourcesEqual(p, src));
             return (
               <motion.button
                 key={`m-${m.id}`}
@@ -347,7 +404,7 @@ export function SourcePicker({ onSelect, submitLabel = "Start Capture" }: Source
                   borderRadius: radii.md, cursor: "pointer", textAlign: "left" as const,
                   width: "100%", position: "relative",
                 }}
-                onClick={() => setSelected(src)}
+                onClick={(e) => handleSelect(src, e.shiftKey)}
               >
                 <motion.div
                   variants={{ idle: { scale: 1 }, active: { scale: 0.98 } }}
@@ -395,7 +452,7 @@ export function SourcePicker({ onSelect, submitLabel = "Start Capture" }: Source
         {tab === "windows" && hasWindows &&
           sources.windows.map((w) => {
             const src: CaptureSource = { type: "window", id: w.id };
-            const isSelected = sourcesEqual(selected, src);
+            const isSelected = selected.some(p => sourcesEqual(p, src));
             return (
               <motion.button
                 key={`w-${w.id}`}
@@ -409,7 +466,7 @@ export function SourcePicker({ onSelect, submitLabel = "Start Capture" }: Source
                   width: "100%", position: "relative",
                   ...(w.isMinimized ? { opacity: 0.5 } : {}),
                 }}
-                onClick={() => setSelected(src)}
+                onClick={(e) => handleSelect(src, e.shiftKey)}
                 onMouseEnter={(e) => {
                   setHoveredWindow(src);
                   const ratio = w.height > 0 ? w.width / w.height : 16 / 9;
@@ -465,7 +522,7 @@ export function SourcePicker({ onSelect, submitLabel = "Start Capture" }: Source
 
       {/* Start button */}
       <div style={{ flexShrink: 0 }}>
-        {selected && (
+        {selected.length > 0 && (
           <Button variant="primary" size="lg" fullWidth onClick={() => onSelect(selected)} style={{ marginTop: spacing.lg }}>
             {submitLabel}
           </Button>

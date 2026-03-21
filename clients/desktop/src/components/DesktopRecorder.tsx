@@ -23,7 +23,7 @@ import { cardButtonStyle } from "./PageLayout.js";
 
 interface DesktopRecorderProps {
   token: string;
-  source: CaptureSource;
+  source: CaptureSource[];
   onChangeSource: () => void;
   onBack: () => void;
   onViewSession: (token: string) => void;
@@ -31,16 +31,65 @@ interface DesktopRecorderProps {
 
 const API_BASE = "https://collapse.b.selfhosted.hackclub.com";
 
+function RecorderPreviewItem({ 
+  src, 
+  isMain, 
+  captureUrl, 
+  isMulti 
+}: { 
+  src: CaptureSource; 
+  isMain: boolean; 
+  captureUrl: string | null; 
+  isMulti: boolean;
+}) {
+  const { previewUrl: livePreviewUrl } = useScreenPreview(
+    isMain && captureUrl ? null : src,
+    2000
+  );
+  const previewUrl = (isMain ? captureUrl : null) || livePreviewUrl;
+
+  if (!previewUrl) {
+    return (
+      <div style={{
+        flex: 1, minHeight: 0, minWidth: 0,
+        borderRadius: radii.lg, overflow: "hidden", background: colors.bg.sunken,
+        border: `1px solid ${colors.border.default}`, aspectRatio: isMulti ? undefined : "16/9",
+        display: "flex", alignItems: "center", justifyContent: "center",
+      }}>
+        <Spinner size="sm" />
+      </div>
+    );
+  }
+
+  return (
+    <div style={{
+      position: "relative", borderRadius: radii.lg,
+      overflow: "hidden", background: colors.bg.sunken, border: `1px solid ${colors.border.default}`,
+      flex: 1, minHeight: 0, minWidth: 0,
+    }}>
+      <img
+        src={previewUrl}
+        alt="Screen preview"
+        style={{ width: "100%", height: "100%", objectFit: isMulti ? "cover" : "contain", display: "block" }}
+      />
+      {isMain && (
+        <span style={{
+          position: "absolute", bottom: 6, right: 6, fontSize: fontSize.xs,
+          color: colors.badge.overlayText, background: colors.badge.overlayBg,
+          padding: "2px 6px", borderRadius: radii.sm,
+        }}>
+          {captureUrl ? "Latest capture" : "Live preview"}
+        </span>
+      )}
+    </div>
+  );
+}
+
 export function DesktopRecorder({ token, source, onChangeSource, onBack, onViewSession }: DesktopRecorderProps) {
   const isMacOS = navigator.userAgent.includes("Mac");
   const session = useSession();
   const capture = useNativeCapture(token, API_BASE, source);
-  // Live preview runs until first capture arrives, then the captured frame takes over
-  const { previewUrl: livePreviewUrl } = useScreenPreview(
-    capture.lastScreenshotUrl ? null : source,
-    2000,
-  );
-  const previewUrl = capture.lastScreenshotUrl || livePreviewUrl;
+  
   const displaySeconds = useSessionTimer(
     capture.trackedSeconds || session.trackedSeconds,
     capture.isCapturing,
@@ -247,15 +296,22 @@ export function DesktopRecorder({ token, source, onChangeSource, onBack, onViewS
       </div>
 
       {/* Screen preview — fills available space */}
-      <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", marginBottom: spacing.lg }}>
-        {previewUrl ? (
+      <div style={{ 
+        flex: 1, 
+        minHeight: 0, 
+        display: "flex", 
+        flexDirection: "row", 
+        gap: source.length > 1 && !capture.lastScreenshotUrl ? spacing.xs : 0,
+        marginBottom: spacing.lg 
+      }}>
+        {capture.lastScreenshotUrl ? (
           <div style={{
             position: "relative", borderRadius: radii.lg,
             overflow: "hidden", background: colors.bg.sunken, border: `1px solid ${colors.border.default}`,
-            flex: 1, minHeight: 0,
+            flex: 1, minHeight: 0, minWidth: 0,
           }}>
             <img
-              src={previewUrl}
+              src={capture.lastScreenshotUrl}
               alt="Screen preview"
               style={{ width: "100%", height: "100%", objectFit: "contain", display: "block" }}
             />
@@ -264,17 +320,19 @@ export function DesktopRecorder({ token, source, onChangeSource, onBack, onViewS
               color: colors.badge.overlayText, background: colors.badge.overlayBg,
               padding: "2px 6px", borderRadius: radii.sm,
             }}>
-              {capture.lastScreenshotUrl ? "Latest capture" : "Live preview"}
+              Latest capture
             </span>
           </div>
         ) : (
-          <div style={{
-            borderRadius: radii.lg, overflow: "hidden", background: colors.bg.sunken,
-            border: `1px solid ${colors.border.default}`, aspectRatio: "16/9",
-            display: "flex", alignItems: "center", justifyContent: "center",
-          }}>
-            <Spinner size="sm" />
-          </div>
+          source.map((src) => (
+            <RecorderPreviewItem
+              key={`${src.type}:${src.id}`}
+              src={src}
+              isMain={false}
+              captureUrl={null}
+              isMulti={source.length > 1}
+            />
+          ))
         )}
       </div>
 

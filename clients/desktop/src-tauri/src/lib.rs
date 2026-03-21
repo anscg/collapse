@@ -498,7 +498,7 @@ fn take_screenshot(
 /// frontend can display the captured frame without a separate IPC call.
 #[tauri::command]
 async fn capture_and_upload(
-    source: CaptureSource,
+    sources: Vec<CaptureSource>,
     max_width: u32,
     max_height: u32,
     jpeg_quality: u8,
@@ -514,7 +514,7 @@ async fn capture_and_upload(
 
     // Step 1: Native screenshot
     let _ = app.emit("capture-progress", "capturing screen...");
-    let screenshot = capture::take_screenshot(source, max_width, max_height, jpeg_quality)?;
+    let screenshot = capture::take_stitched_screenshots(&sources, max_width, max_height, jpeg_quality)?;
     let jpeg_bytes = base64_decode(&screenshot.base64)?;
     let _ = app.emit(
         "capture-progress",

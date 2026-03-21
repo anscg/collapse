@@ -26,7 +26,7 @@ interface CaptureUploadResult {
 export function useNativeCapture(
   token: string,
   apiBaseUrl: string,
-  source: CaptureSource,
+  sources: CaptureSource[],
 ) {
   const [isCapturing, setIsCapturing] = useState(false);
   const [trackedSeconds, setTrackedSeconds] = useState(0);
@@ -35,18 +35,19 @@ export function useNativeCapture(
   const [lastScreenshotUrl, setLastScreenshotUrl] = useState<string | null>(null);
 
   const configuredRef = useRef(false);
-  const sourceRef = useRef(source);
-  sourceRef.current = source;
+  const sourcesRef = useRef(sources);
+  sourcesRef.current = sources;
 
   // Track blob URL for cleanup
   const blobUrlRef = useRef<string | null>(null);
 
   const captureOnce = useCallback(async () => {
-    const s = sourceRef.current;
-    console.log(`[capture] starting capture for ${s.type} id=${s.id}`);
+    const s = sourcesRef.current;
+    if (s.length === 0) return;
+    console.log(`[capture] starting capture for ${s.length} sources`);
     try {
       const result = await invoke<CaptureUploadResult>("capture_and_upload", {
-        source: s,
+        sources: s,
         maxWidth: MAX_WIDTH,
         maxHeight: MAX_HEIGHT,
         jpegQuality: Math.round(JPEG_QUALITY * 100),

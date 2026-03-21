@@ -3,6 +3,19 @@ import { invoke } from "../logger.js";
 import type { CaptureSource } from "./useNativeCapture.js";
 
 const sharedPreviewUrlCache = new Map<string, string>();
+const previewListeners = new Map<string, Set<(url: string) => void>>();
+
+function setSharedPreviewUrl(key: string, url: string) {
+  const oldUrl = sharedPreviewUrlCache.get(key);
+  if (oldUrl && oldUrl !== url) {
+    URL.revokeObjectURL(oldUrl);
+  }
+  sharedPreviewUrlCache.set(key, url);
+  const subs = previewListeners.get(key);
+  if (subs) {
+    for (const cb of subs) cb(url);
+  }
+}
 
 interface PreviewResult {
   base64: string;
@@ -28,16 +41,33 @@ export function useScreenPreview(
   // Derive a stable key from the source for dependency tracking
   const sourceKey = source ? `${source.type}:${source.id}` : "";
 
+  // Subscribe to URL updates for this source key
+  useEffect(() => {
+    if (!sourceKey) return;
+
+    // Load initial cached value if available
+    const cached = sharedPreviewUrlCache.get(sourceKey);
+    if (cached) setPreviewUrl(cached);
+
+    const handler = (url: string) => setPreviewUrl(url);
+    
+    let subs = previewListeners.get(sourceKey);
+    if (!subs) {
+      subs = new Set();
+      previewListeners.set(sourceKey, subs);
+    }
+    subs.add(handler);
+
+    return () => {
+      subs?.delete(handler);
+    };
+  }, [sourceKey]);
+
   useEffect(() => {
     if (!source) {
       setPreviewUrl(null);
       setError(null);
       return;
-    }
-
-    const cached = sharedPreviewUrlCache.get(sourceKey);
-    if (cached) {
-      setPreviewUrl(cached);
     }
 
     let cancelled = false;
@@ -54,13 +84,11 @@ export function useScreenPreview(
           jpegQuality: 50,
         });
         if (cancelled) return;
-        const prevForSource = sharedPreviewUrlCache.get(sourceKey);
-        if (prevForSource) URL.revokeObjectURL(prevForSource);
         const bytes = Uint8Array.from(atob(result.base64), (c) => c.charCodeAt(0));
         const blob = new Blob([bytes], { type: "image/jpeg" });
         const url = URL.createObjectURL(blob);
-        sharedPreviewUrlCache.set(sourceKey, url);
-        setPreviewUrl(url);
+        
+        setSharedPreviewUrl(sourceKey, url);
         setError(null);
         console.debug(`[preview] got preview ${result.width}x${result.height} (${result.size_bytes} bytes)`);
       } catch (err) {
@@ -72,6 +100,7 @@ export function useScreenPreview(
       }
     };
 
+    const cached = sharedPreviewUrlCache.get(sourceKey);
     if (live || !cached) {
       capture();
     }

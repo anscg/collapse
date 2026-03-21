@@ -24,7 +24,7 @@ interface RecordPageProps {
 
 export function RecordPage({ token, onBack, onViewSession }: RecordPageProps) {
   const isMacOS = navigator.userAgent.includes("Mac");
-  const [captureSource, setCaptureSource] = useState<CaptureSource | null>(null);
+  const [captureSource, setCaptureSource] = useState<CaptureSource[] | null>(null);
   const [captureFlowDirection, setCaptureFlowDirection] = useState(1);
   const [stopping, setStopping] = useState(false);
   const [sessionCheck, setSessionCheck] = useState<"loading" | "ok" | "finished" | "error">("loading");
@@ -92,9 +92,9 @@ export function RecordPage({ token, onBack, onViewSession }: RecordPageProps) {
     setIsPrompting(false);
   }, []);
 
-  const handleSelectSource = useCallback((source: CaptureSource) => {
+  const handleSelectSource = useCallback((source: CaptureSource | CaptureSource[]) => {
     setCaptureFlowDirection(1);
-    setCaptureSource(source);
+    setCaptureSource(Array.isArray(source) ? source : [source]);
   }, []);
 
   const handleChangeSource = useCallback(() => {
@@ -226,7 +226,7 @@ export function RecordPage({ token, onBack, onViewSession }: RecordPageProps) {
           </motion.div>
         ) : (
           <motion.div
-            key={`recorder:${captureSource.type}:${captureSource.id}`}
+            key={`recorder:${captureSource.map(s => `${s.type}:${s.id}`).join(',')}`}
             custom={captureFlowDirection}
             initial="enter"
             animate="center"

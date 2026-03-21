@@ -16,19 +16,13 @@ use objc2_core_graphics::{
     CGWindowListCopyWindowInfo, CGWindowListCreateImage, CGWindowListOption,
 };
 
-/// Capture a specific source (monitor or window), scale to fit, encode as JPEG.
-pub fn take_screenshot(
-    source: CaptureSource,
-    max_width: u32,
-    max_height: u32,
-    jpeg_quality: u8,
-) -> Result<CaptureResult, String> {
+fn capture_to_dynamic_image(source: &CaptureSource) -> Result<DynamicImage, String> {
     let img = match source {
         CaptureSource::Monitor { id } => {
             let monitor = Monitor::all()
                 .map_err(|e| format!("Failed to enumerate monitors: {e}"))?
                 .into_iter()
-                .find(|m| m.id().ok() == Some(id))
+                .find(|m| m.id().ok() == Some(*id))
                 .ok_or_else(|| format!("Monitor with id {id} not found"))?;
             monitor
                 .capture_image()
@@ -37,7 +31,7 @@ pub fn take_screenshot(
         CaptureSource::Window { id } => {
             #[cfg(target_os = "macos")]
             {
-                return take_window_screenshot_macos(id, max_width, max_height, jpeg_quality);
+                return capture_window_macos_to_dynamic_image(*id);
             }
 
             #[cfg(not(target_os = "macos"))]
@@ -45,7 +39,7 @@ pub fn take_screenshot(
                 let window = Window::all()
                     .map_err(|e| format!("Failed to enumerate windows: {e}"))?
                     .into_iter()
-                    .find(|w| w.id().ok() == Some(id))
+                    .find(|w| w.id().ok() == Some(*id))
                     .ok_or_else(|| format!("Window with id {id} not found"))?;
                 window
                     .capture_image()
@@ -54,7 +48,38 @@ pub fn take_screenshot(
         }
     };
 
-    let mut dynamic = DynamicImage::ImageRgba8(img);
+    Ok(DynamicImage::ImageRgba8(img))
+}
+
+#[cfg(target_os = "macos")]
+fn capture_window_macos_to_dynamic_image(id: u32) -> Result<DynamicImage, String> {
+    let window = get_window_cf_dictionary_any_space(id)?;
+    let bounds = get_window_cg_rect(window.as_ref())?;
+
+    let cg_image = CGWindowListCreateImage(
+        bounds,
+        CGWindowListOption::OptionIncludingWindow,
+        id,
+        CGWindowImageOption::Default,
+    );
+
+    let rgba =
+        cgimage_to_rgba8(cg_image).ok_or_else(|| "Window capture decode failed".to_string())?;
+    Ok(DynamicImage::ImageRgba8(rgba))
+}
+
+/// Capture a specific source (monitor or window), scale to fit, encode as JPEG.
+pub fn take_screenshot(
+    source: CaptureSource,
+    max_width: u32,
+    max_height: u32,
+    jpeg_quality: u8,
+) -> Result<CaptureResult, String> {
+    let mut dynamic = capture_to_dynamic_image(&source)?;
+
+    if dynamic.width() <= 2 || dynamic.height() <= 2 {
+        return Err("Source is minimized or invisible".to_string());
+    }
 
     // Scale down if needed (preserving aspect ratio)
     let (w, h) = (dynamic.width(), dynamic.height());
@@ -89,27 +114,67 @@ pub fn take_screenshot(
     })
 }
 
-#[cfg(target_os = "macos")]
-pub fn take_window_screenshot_macos(
-    id: u32,
+pub fn take_stitched_screenshots(
+    sources: &[CaptureSource],
     max_width: u32,
     max_height: u32,
     jpeg_quality: u8,
 ) -> Result<CaptureResult, String> {
-    let window = get_window_cf_dictionary_any_space(id)?;
-    let bounds = get_window_cg_rect(window.as_ref())?;
+    if sources.is_empty() {
+        return Err("No sources provided".to_string());
+    }
 
-    let cg_image = CGWindowListCreateImage(
-        bounds,
-        CGWindowListOption::OptionIncludingWindow,
-        id,
-        CGWindowImageOption::Default,
-    );
+    if sources.len() == 1 {
+        return take_screenshot(sources[0].clone(), max_width, max_height, jpeg_quality);
+    }
 
-    let rgba =
-        cgimage_to_rgba8(cg_image).ok_or_else(|| "Window capture decode failed".to_string())?;
-    let mut dynamic = DynamicImage::ImageRgba8(rgba);
+    let mut images = Vec::new();
+    for source in sources {
+        if let Ok(img) = capture_to_dynamic_image(source) {
+            // Drop ghost artifacts from closed/minimized windows (OS sometimes returns 1x1 buffers)
+            if img.width() > 2 && img.height() > 2 {
+                images.push(img);
+            }
+        }
+    }
 
+    if images.is_empty() {
+        return Err(
+            "All selected windows or screens are currently closed or minimized".to_string(),
+        );
+    }
+
+    let target_h = images.iter().map(|img| img.height()).max().unwrap_or(0);
+
+    // Scale images to match target_h
+    let mut scaled_images = Vec::new();
+    let mut total_w = 0;
+
+    for img in images {
+        let (w, h) = (img.width(), img.height());
+        if h != target_h && h > 0 {
+            let scale = target_h as f64 / h as f64;
+            let new_w = (w as f64 * scale).round() as u32;
+            let scaled = img.resize_exact(new_w, target_h, image::imageops::FilterType::Lanczos3);
+            total_w += scaled.width();
+            scaled_images.push(scaled);
+        } else {
+            total_w += w;
+            scaled_images.push(img);
+        }
+    }
+
+    let mut stitched = image::RgbaImage::new(total_w, target_h);
+    let mut current_x = 0;
+    for img in scaled_images {
+        let rgba = img.to_rgba8();
+        image::imageops::overlay(&mut stitched, &rgba, current_x as i64, 0);
+        current_x += img.width() as i64;
+    }
+
+    let mut dynamic = DynamicImage::ImageRgba8(stitched);
+
+    // Scale down if needed (preserving aspect ratio)
     let (w, h) = (dynamic.width(), dynamic.height());
     if w > max_width || h > max_height {
         let scale = f64::min(max_width as f64 / w as f64, max_height as f64 / h as f64);
@@ -119,6 +184,8 @@ pub fn take_window_screenshot_macos(
     }
 
     let (final_w, final_h) = (dynamic.width(), dynamic.height());
+
+    // Encode as JPEG
     let rgb = dynamic.to_rgb8();
     let mut jpeg_buf = Cursor::new(Vec::new());
     let mut encoder = JpegEncoder::new_with_quality(&mut jpeg_buf, jpeg_quality);
@@ -128,6 +195,7 @@ pub fn take_window_screenshot_macos(
 
     let jpeg_bytes = jpeg_buf.into_inner();
     let size_bytes = jpeg_bytes.len();
+
     use base64::Engine;
     let base64 = base64::engine::general_purpose::STANDARD.encode(&jpeg_bytes);
 
