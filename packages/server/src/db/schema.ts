@@ -50,6 +50,8 @@ export const sessions = pgTable(
     totalActiveSeconds: integer("total_active_seconds").notNull().default(0),
     videoUrl: text("video_url"),
     videoR2Key: text("video_r2_key"),
+    videoWebmUrl: text("video_webm_url"),
+    videoWebmR2Key: text("video_webm_r2_key"),
     thumbnailUrl: text("thumbnail_url"),
     thumbnailR2Key: text("thumbnail_r2_key"),
     createdAt: timestamp("created_at", { withTimezone: true })
