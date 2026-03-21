@@ -202,12 +202,17 @@ jobs:
               *windows*) OS="windows" ;;
               *) OS="unknown" ;;
             esac
-            # Add OS label to filename
-            # RPMs use hyphens (Collapse-0.0.16-1.aarch64.rpm) while others use underscores
+            # Normalize RPM names to match underscore convention used by other artifacts
+            # Collapse-0.0.16-1.x86_64.rpm -> Collapse_0.0.16_x86_64.rpm
             if [[ "$FILENAME" == *.rpm ]]; then
-              # Insert OS label after package name: Collapse-0.0.16-1.x86_64.rpm -> Collapse_linux-0.0.16-1.x86_64.rpm
-              NEW_NAME="Collapse_${OS}-${FILENAME#Collapse-}"
-            elif [[ "$FILENAME" == *"_"* ]] && [[ "$FILENAME" != *"${OS}-"* ]]; then
+              # Strip "Collapse-", version, release number; extract arch
+              RPM_REST="${FILENAME#Collapse-}"       # 0.0.16-1.x86_64.rpm
+              RPM_VER="${RPM_REST%%-[0-9].*}"        # 0.0.16
+              RPM_ARCH="${RPM_REST##*-[0-9].}"       # x86_64.rpm
+              FILENAME="Collapse_${RPM_VER}_${RPM_ARCH}"
+            fi
+            # Add OS label: Collapse_0.0.16_x64-setup.exe -> Collapse_linux-0.0.16_x64-setup.exe
+            if [[ "$FILENAME" == *"_"* ]] && [[ "$FILENAME" != *"${OS}-"* ]]; then
               PREFIX="${FILENAME%%_*}"
               SUFFIX="${FILENAME#*_}"
               NEW_NAME="${PREFIX}_${OS}-${SUFFIX}"
