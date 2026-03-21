@@ -105,6 +105,7 @@ export async function sessionRoutes(app: FastifyInstance) {
         createdAt: session.createdAt.toISOString(),
         thumbnailUrl: session.thumbnailUrl ?? null,
         videoUrl: session.videoUrl ?? null,
+        videoWebmUrl: session.videoWebmUrl ?? null,
         metadata: session.metadata ?? {},
       };
     },
@@ -614,12 +615,13 @@ export async function sessionRoutes(app: FastifyInstance) {
       return {
         status: session.status,
         videoUrl: session.videoUrl ?? undefined,
+        videoWebmUrl: session.videoWebmUrl ?? undefined,
         trackedSeconds,
       };
     },
   );
 
-  // Get video presigned URL
+  // Get video presigned URL (supports ?format=mp4|webm, default mp4)
   app.get<{ Params: { token: string }; Querystring: { format?: string } }>(
     "/api/sessions/:token/video",
     {
@@ -652,10 +654,20 @@ export async function sessionRoutes(app: FastifyInstance) {
       }
 
       const format = request.query.format === "webm" ? "webm" : "mp4";
-      let key = session.videoR2Key;
-      if (format === "webm") {
-        key = key.replace(".mp4", ".webm");
+      const r2Key = format === "webm" ? session.videoWebmR2Key : session.videoR2Key;
+
+      if (!r2Key) {
+        return reply.code(404).send({ error: `${format.toUpperCase()} video not available` });
       }
+
+      const { GetObjectCommand } = await import("@aws-sdk/client-s3");
+      const command = new GetObjectCommand({
+        Bucket: R2_BUCKET,
+        Key: r2Key,
+      });
+      const videoUrl = await getSignedUrl(r2Client, command, {
+        expiresIn: 3600,
+      });
 
       const { GetObjectCommand } = await import("@aws-sdk/client-s3");
       try {
@@ -813,6 +825,7 @@ export async function sessionRoutes(app: FastifyInstance) {
             totalActiveSeconds: s.totalActiveSeconds,
             thumbnailUrl,
             videoUrl: s.videoUrl ?? null,
+            videoWebmUrl: s.videoWebmUrl ?? null,
             metadata: s.metadata ?? {},
           };
         }),
