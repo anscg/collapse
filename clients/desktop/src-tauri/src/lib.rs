@@ -1,9 +1,38 @@
 mod capture;
 
+#[cfg(target_os = "macos")]
+use std::ffi::c_void;
+#[cfg(target_os = "macos")]
+use objc2_core_foundation::{CFBoolean, CFDictionary, CFNumber, CFNumberType, CFString, CGRect};
+#[cfg(target_os = "macos")]
+use objc2_core_graphics::{
+    CGDataProvider, CGImage, CGRectMakeWithDictionaryRepresentation, CGWindowImageOption,
+    CGWindowListCopyWindowInfo, CGWindowListCreateImage, CGWindowListOption,
+};
 use serde::{Deserialize, Serialize};
+#[cfg(target_os = "macos")]
+use std::collections::HashMap;
+#[cfg(target_os = "macos")]
+use std::sync::OnceLock;
 use std::sync::Mutex;
+#[cfg(target_os = "macos")]
+use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_deep_link::DeepLinkExt;
+
+#[cfg(target_os = "macos")]
+#[derive(Clone, Copy)]
+struct CapturableWindowCacheEntry {
+    is_capturable: bool,
+    checked_at: Instant,
+}
+
+#[cfg(target_os = "macos")]
+static CAPTURABLE_WINDOW_CACHE: OnceLock<Mutex<HashMap<u32, CapturableWindowCacheEntry>>> =
+    OnceLock::new();
+
+#[cfg(target_os = "macos")]
+const CAPTURABLE_WINDOW_CACHE_TTL: Duration = Duration::from_secs(15);
 
 /// App state shared across commands.
 pub struct AppState {
@@ -120,6 +149,175 @@ fn should_exclude_window(app_name: &str, title: &str) -> bool {
             .any(|excluded| title_lower == *excluded)
 }
 
+#[cfg(target_os = "macos")]
+fn get_cf_dictionary_get_value(cf_dictionary: &CFDictionary, key: &str) -> Option<*const c_void> {
+    let cf_key = CFString::from_str(key);
+    let cf_key_ref = cf_key.as_ref() as *const CFString;
+    let value = unsafe { cf_dictionary.value(cf_key_ref.cast()) };
+    if value.is_null() {
+        return None;
+    }
+    Some(value)
+}
+
+#[cfg(target_os = "macos")]
+fn dict_i32(dict: &CFDictionary, key: &str) -> Option<i32> {
+    let cf_number = get_cf_dictionary_get_value(dict, key)? as *const CFNumber;
+    let mut value: i32 = 0;
+    let ok = unsafe { (*cf_number).value(CFNumberType::IntType, &mut value as *mut _ as *mut c_void) };
+    if !ok {
+        return None;
+    }
+    Some(value)
+}
+
+#[cfg(target_os = "macos")]
+fn dict_string(dict: &CFDictionary, key: &str) -> Option<String> {
+    let value_ref = get_cf_dictionary_get_value(dict, key)? as *const CFString;
+    Some(unsafe { (*value_ref).to_string() })
+}
+
+#[cfg(target_os = "macos")]
+fn dict_bool(dict: &CFDictionary, key: &str) -> Option<bool> {
+    let value_ref = get_cf_dictionary_get_value(dict, key)? as *const CFBoolean;
+    Some(unsafe { (*value_ref).value() })
+}
+
+#[cfg(target_os = "macos")]
+fn window_bounds(dict: &CFDictionary) -> Option<CGRect> {
+    let value_ref = get_cf_dictionary_get_value(dict, "kCGWindowBounds")? as *const CFDictionary;
+    let mut rect = CGRect::default();
+    let ok = unsafe { CGRectMakeWithDictionaryRepresentation(Some(&*value_ref), &mut rect) };
+    if !ok {
+        return None;
+    }
+    Some(rect)
+}
+
+#[cfg(target_os = "macos")]
+fn window_is_capturable(window_id: u32, bounds: CGRect) -> bool {
+    let cache = CAPTURABLE_WINDOW_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    let now = Instant::now();
+
+    if let Ok(cache_guard) = cache.lock() {
+        if let Some(entry) = cache_guard.get(&window_id) {
+            if now.duration_since(entry.checked_at) <= CAPTURABLE_WINDOW_CACHE_TTL {
+                return entry.is_capturable;
+            }
+        }
+    }
+
+    let image = CGWindowListCreateImage(
+        bounds,
+        CGWindowListOption::OptionIncludingWindow,
+        window_id,
+        CGWindowImageOption::Default,
+    );
+
+    let Some(image) = image else {
+        if let Ok(mut cache_guard) = cache.lock() {
+            cache_guard.insert(
+                window_id,
+                CapturableWindowCacheEntry {
+                    is_capturable: false,
+                    checked_at: now,
+                },
+            );
+        }
+        return false;
+    };
+
+    let width = CGImage::width(Some(&image));
+    let height = CGImage::height(Some(&image));
+    let bytes_per_row = CGImage::bytes_per_row(Some(&image));
+    let data_provider = CGImage::data_provider(Some(&image));
+    let data = CGDataProvider::data(data_provider.as_deref());
+    let is_capturable = width > 0
+        && height > 0
+        && bytes_per_row >= width * 4
+        && data.as_ref().is_some_and(|bytes| !bytes.is_empty());
+
+    if let Ok(mut cache_guard) = cache.lock() {
+        cache_guard.retain(|_, entry| now.duration_since(entry.checked_at) <= CAPTURABLE_WINDOW_CACHE_TTL);
+        cache_guard.insert(
+            window_id,
+            CapturableWindowCacheEntry {
+                is_capturable,
+                checked_at: now,
+            },
+        );
+    }
+
+    is_capturable
+}
+
+#[cfg(target_os = "macos")]
+fn list_macos_windows_any_space() -> Vec<WindowInfo> {
+    let Some(entries) = CGWindowListCopyWindowInfo(
+        CGWindowListOption::OptionAll | CGWindowListOption::ExcludeDesktopElements,
+        0,
+    ) else {
+        return Vec::new();
+    };
+
+    let mut windows = Vec::new();
+
+    for i in 0..entries.count() {
+        let dict_ref = unsafe { entries.value_at_index(i) } as *const CFDictionary;
+        if dict_ref.is_null() {
+            continue;
+        }
+        let dict = unsafe { &*dict_ref };
+
+        let Some(id) = dict_i32(dict, "kCGWindowNumber") else {
+            continue;
+        };
+        let Some(sharing_state) = dict_i32(dict, "kCGWindowSharingState") else {
+            continue;
+        };
+        if sharing_state == 0 {
+            continue;
+        }
+
+        let app_name = dict_string(dict, "kCGWindowOwnerName").unwrap_or_default();
+        let title = dict_string(dict, "kCGWindowName").unwrap_or_default();
+        let Some(bounds) = window_bounds(dict) else {
+            continue;
+        };
+        let width = bounds.size.width;
+        let height = bounds.size.height;
+
+        if should_exclude_window(&app_name, &title) {
+            continue;
+        }
+        if width < 50.0 || height < 50.0 {
+            continue;
+        }
+        if title.is_empty() && app_name.is_empty() {
+            continue;
+        }
+        if app_name == "Collapse" {
+            continue;
+        }
+        if !window_is_capturable(id as u32, bounds) {
+            continue;
+        }
+
+        let is_on_screen = dict_bool(dict, "kCGWindowIsOnscreen").unwrap_or(true);
+        windows.push(WindowInfo {
+            id: id as u32,
+            app_name,
+            title,
+            width: width as u32,
+            height: height as u32,
+            is_minimized: !is_on_screen,
+            is_focused: false,
+        });
+    }
+
+    windows
+}
+
 #[derive(Serialize, Deserialize)]
 pub struct UploadUrlResponse {
     #[serde(rename = "uploadUrl")]
@@ -170,7 +368,9 @@ fn get_cold_start_urls(state: State<'_, AppState>) -> Vec<String> {
 /// List available capture sources (monitors + windows).
 #[tauri::command]
 fn list_capture_sources() -> Result<CaptureSourceList, String> {
-    use xcap::{Monitor, Window};
+    use xcap::Monitor;
+    #[cfg(not(target_os = "macos"))]
+    use xcap::Window;
 
     let monitors: Vec<MonitorInfo> = Monitor::all()
         .map_err(|e| format!("Failed to list monitors: {e}"))?
@@ -189,6 +389,10 @@ fn list_capture_sources() -> Result<CaptureSourceList, String> {
         .collect();
 
     // Window enumeration can fail on some platforms — treat as empty list, not error
+    #[cfg(target_os = "macos")]
+    let windows: Vec<WindowInfo> = list_macos_windows_any_space();
+
+    #[cfg(not(target_os = "macos"))]
     let windows: Vec<WindowInfo> = Window::all()
         .unwrap_or_default()
         .into_iter()

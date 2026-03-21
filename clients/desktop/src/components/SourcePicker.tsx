@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback, useRef } from "react";
 import { invoke } from "../logger.js";
-import { LayoutGroup, motion } from "motion/react";
+import { AnimatePresence, LayoutGroup, motion } from "motion/react";
 import {
   Button,
   ErrorDisplay,
@@ -54,6 +54,8 @@ export function SourcePicker({ onSelect, submitLabel = "Start Capture" }: Source
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<"screens" | "windows">("screens");
   const [selected, setSelected] = useState<CaptureSource | null>(null);
+  const [hoveredWindow, setHoveredWindow] = useState<CaptureSource | null>(null);
+  const [hoverAspectRatio, setHoverAspectRatio] = useState(16 / 9);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const [showTopMask, setShowTopMask] = useState(false);
@@ -68,6 +70,7 @@ export function SourcePicker({ onSelect, submitLabel = "Start Capture" }: Source
 
   // Live preview of currently selected source
   const { previewUrl } = useScreenPreview(selected, 1500);
+  const { previewUrl: hoverPreviewUrl } = useScreenPreview(hoveredWindow, 1200, false);
 
   const refresh = useCallback(async () => {
     console.log("[sources] listing capture sources...");
@@ -133,6 +136,19 @@ export function SourcePicker({ onSelect, submitLabel = "Start Capture" }: Source
   }
 
   const hasWindows = sources.windows.length > 0;
+  const hoverMatchesSelected = !!hoveredWindow && sourcesEqual(hoveredWindow, selected);
+  const showHoverPreview = tab === "windows" && hoveredWindow && !hoverMatchesSelected;
+  const selectedIsWindow = selected?.type === "window";
+  const selectedKey = selected ? `${selected.type}:${selected.id}` : "preview-empty";
+  const selectedHandoffLayoutId =
+    hoverMatchesSelected && selected?.type === "window"
+      ? `hover-to-main-preview-${selected.id}`
+      : undefined;
+  const hoveredHandoffLayoutId =
+    hoveredWindow?.type === "window" ? `hover-to-main-preview-${hoveredWindow.id}` : undefined;
+  const previewSrc = selectedIsWindow && hoverMatchesSelected
+    ? (hoverPreviewUrl ?? previewUrl)
+    : (previewUrl ?? null);
 
   return (
     <div style={{
@@ -151,18 +167,86 @@ export function SourcePicker({ onSelect, submitLabel = "Start Capture" }: Source
 
         {/* Live preview */}
         <div style={{
+          position: "relative",
           borderRadius: radii.lg, overflow: "hidden", background: colors.bg.sunken,
           border: `1px solid ${colors.border.default}`, marginBottom: spacing.lg, aspectRatio: "16/9",
         }}>
-          {previewUrl ? (
-            <img src={previewUrl} alt="Preview" style={{ width: "100%", height: "100%", objectFit: "contain", display: "block" }} />
-          ) : (
-            <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}>
-              <p style={{ fontSize: fontSize.md, color: colors.text.quaternary, textAlign: "center" }}>
-                {selected ? "Capturing preview..." : "Select a source below"}
-              </p>
-            </div>
-          )}
+          <LayoutGroup id="preview-handoff">
+            <AnimatePresence mode="sync" initial={false}>
+              {previewSrc ? (
+                <motion.img
+                  key={selectedKey}
+                  src={previewSrc}
+                  alt="Preview"
+                  layoutId={selectedHandoffLayoutId}
+                  initial={{ opacity: 0, scale: selectedIsWindow ? 1.08 : 1.02 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  exit={{ opacity: 0, scale: 0.98 }}
+                  transition={{
+                    opacity: { duration: 0.22, ease: "easeOut" },
+                    scale: { type: "spring", stiffness: 360, damping: 32, mass: 0.7 },
+                    layout: { type: "spring", stiffness: 420, damping: 34, mass: 0.75 },
+                  }}
+                  style={{
+                    width: "100%",
+                    height: "100%",
+                    objectFit: "contain",
+                    display: "block",
+                    position: "absolute",
+                    inset: 0,
+                  }}
+                />
+              ) : (
+                <motion.div
+                  key="preview-empty"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}
+                >
+                  <p style={{ fontSize: fontSize.md, color: colors.text.quaternary, textAlign: "center" }}>
+                    {selected ? "Capturing preview..." : "Select a source below"}
+                  </p>
+                </motion.div>
+              )}
+            </AnimatePresence>
+
+            {showHoverPreview && (
+              <motion.div
+                initial={{ opacity: 0, scale: 0.92 }}
+                animate={{ opacity: 1, scale: 1 }}
+                transition={{ type: "spring", stiffness: 420, damping: 32, mass: 0.7 }}
+                style={{
+                  position: "absolute",
+                  right: spacing.md,
+                  top: spacing.xl,
+                  width: 240,
+                  maxHeight: 180,
+                  aspectRatio: String(hoverAspectRatio),
+                  borderRadius: radii.md,
+                  overflow: "hidden",
+                  background: colors.bg.surface,
+                  border: `1px solid ${colors.border.default}`,
+                  boxShadow: "0 10px 30px rgba(0,0,0,0.22)",
+                  pointerEvents: "none",
+                  zIndex: 2,
+                }}
+              >
+                {hoverPreviewUrl ? (
+                  <motion.img
+                    src={hoverPreviewUrl}
+                    alt="Window hover preview"
+                    layoutId={hoveredHandoffLayoutId}
+                    style={{ width: "100%", height: "100%", objectFit: "contain", display: "block" }}
+                  />
+                ) : (
+                  <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                    <p style={{ fontSize: fontSize.xs, color: colors.text.tertiary }}>Loading preview...</p>
+                  </div>
+                )}
+              </motion.div>
+            )}
+          </LayoutGroup>
         </div>
 
         {/* Tabs */}
@@ -325,6 +409,14 @@ export function SourcePicker({ onSelect, submitLabel = "Start Capture" }: Source
                   ...(w.isMinimized ? { opacity: 0.5 } : {}),
                 }}
                 onClick={() => setSelected(src)}
+                onMouseEnter={(e) => {
+                  setHoveredWindow(src);
+                  const ratio = w.height > 0 ? w.width / w.height : 16 / 9;
+                  setHoverAspectRatio(Math.min(3, Math.max(0.5, ratio)));
+                }}
+                onMouseLeave={() => {
+                  setHoveredWindow(null);
+                }}
               >
                 <motion.div
                   variants={{ idle: { scale: 1 }, active: { scale: 0.98 } }}

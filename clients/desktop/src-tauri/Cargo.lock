@@ -553,6 +553,8 @@ version = "0.0.15"
 dependencies = [
  "base64 0.22.1",
  "image",
+ "objc2-core-foundation",
+ "objc2-core-graphics",
  "reqwest 0.12.28",
  "serde",
  "serde_json",

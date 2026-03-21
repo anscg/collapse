@@ -2,6 +2,8 @@ import { useState, useEffect, useRef } from "react";
 import { invoke } from "../logger.js";
 import type { CaptureSource } from "./useNativeCapture.js";
 
+const sharedPreviewUrlCache = new Map<string, string>();
+
 interface PreviewResult {
   base64: string;
   width: number;
@@ -16,10 +18,10 @@ interface PreviewResult {
 export function useScreenPreview(
   source: CaptureSource | null,
   intervalMs = 2000,
+  live = true,
 ) {
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const urlRef = useRef<string | null>(null);
   const sourceRef = useRef(source);
   sourceRef.current = source;
 
@@ -31,6 +33,11 @@ export function useScreenPreview(
       setPreviewUrl(null);
       setError(null);
       return;
+    }
+
+    const cached = sharedPreviewUrlCache.get(sourceKey);
+    if (cached) {
+      setPreviewUrl(cached);
     }
 
     let cancelled = false;
@@ -47,11 +54,12 @@ export function useScreenPreview(
           jpegQuality: 50,
         });
         if (cancelled) return;
-        if (urlRef.current) URL.revokeObjectURL(urlRef.current);
+        const prevForSource = sharedPreviewUrlCache.get(sourceKey);
+        if (prevForSource) URL.revokeObjectURL(prevForSource);
         const bytes = Uint8Array.from(atob(result.base64), (c) => c.charCodeAt(0));
         const blob = new Blob([bytes], { type: "image/jpeg" });
         const url = URL.createObjectURL(blob);
-        urlRef.current = url;
+        sharedPreviewUrlCache.set(sourceKey, url);
         setPreviewUrl(url);
         setError(null);
         console.debug(`[preview] got preview ${result.width}x${result.height} (${result.size_bytes} bytes)`);
@@ -64,19 +72,25 @@ export function useScreenPreview(
       }
     };
 
-    capture();
+    if (live || !cached) {
+      capture();
+    }
+
+    if (!live) {
+      return () => {
+        cancelled = true;
+        console.debug("[preview] stopping preview");
+      };
+    }
+
     const id = setInterval(capture, intervalMs);
 
     return () => {
       cancelled = true;
       console.debug("[preview] stopping preview");
       clearInterval(id);
-      if (urlRef.current) {
-        URL.revokeObjectURL(urlRef.current);
-        urlRef.current = null;
-      }
     };
-  }, [sourceKey, intervalMs]);
+  }, [sourceKey, intervalMs, live]);
 
   return { previewUrl, error };
 }
