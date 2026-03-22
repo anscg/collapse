@@ -68,13 +68,18 @@ fn capture_window_macos_to_dynamic_image(id: u32) -> Result<DynamicImage, String
     Ok(DynamicImage::ImageRgba8(rgba))
 }
 
-/// Capture a specific source (monitor or window), scale to fit, encode as JPEG.
-pub fn take_screenshot(
+pub struct RawCaptureResult {
+    pub data: Vec<u8>,
+    pub width: u32,
+    pub height: u32,
+}
+
+pub fn take_screenshot_raw(
     source: CaptureSource,
     max_width: u32,
     max_height: u32,
     jpeg_quality: u8,
-) -> Result<CaptureResult, String> {
+) -> Result<RawCaptureResult, String> {
     let mut dynamic = capture_to_dynamic_image(&source)?;
 
     if dynamic.width() <= 2 || dynamic.height() <= 2 {
@@ -87,7 +92,7 @@ pub fn take_screenshot(
         let scale = f64::min(max_width as f64 / w as f64, max_height as f64 / h as f64);
         let new_w = (w as f64 * scale).round() as u32;
         let new_h = (h as f64 * scale).round() as u32;
-        dynamic = dynamic.resize_exact(new_w, new_h, image::imageops::FilterType::Lanczos3);
+        dynamic = dynamic.resize_exact(new_w, new_h, image::imageops::FilterType::Triangle);
     }
 
     let (final_w, final_h) = (dynamic.width(), dynamic.height());
@@ -100,16 +105,30 @@ pub fn take_screenshot(
         .encode_image(&rgb)
         .map_err(|e| format!("JPEG encoding failed: {e}"))?;
 
-    let jpeg_bytes = jpeg_buf.into_inner();
-    let size_bytes = jpeg_bytes.len();
+    Ok(RawCaptureResult {
+        data: jpeg_buf.into_inner(),
+        width: final_w,
+        height: final_h,
+    })
+}
+
+/// Capture a specific source (monitor or window), scale to fit, encode as JPEG.
+pub fn take_screenshot(
+    source: CaptureSource,
+    max_width: u32,
+    max_height: u32,
+    jpeg_quality: u8,
+) -> Result<CaptureResult, String> {
+    let raw = take_screenshot_raw(source, max_width, max_height, jpeg_quality)?;
+    let size_bytes = raw.data.len();
 
     use base64::Engine;
-    let base64 = base64::engine::general_purpose::STANDARD.encode(&jpeg_bytes);
+    let base64 = base64::engine::general_purpose::STANDARD.encode(&raw.data);
 
     Ok(CaptureResult {
         base64,
-        width: final_w,
-        height: final_h,
+        width: raw.width,
+        height: raw.height,
         size_bytes,
     })
 }

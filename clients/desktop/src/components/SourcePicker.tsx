@@ -65,7 +65,7 @@ function PreviewImage({
   isWindow: boolean,
   fallbackUrl?: string | null
 }) {
-  const { previewUrl } = useScreenPreview(source, 1500);
+  const { previewUrl } = useScreenPreview(source, 1);
   const finalUrl = previewUrl || fallbackUrl;
 
   if (!finalUrl) {
@@ -129,7 +129,7 @@ export function SourcePicker({ onSelect, submitLabel = "Start Capture" }: Source
     setShowBottomMask(Math.ceil(scrollTop + clientHeight) < scrollHeight);
   }, []);
 
-  const { previewUrl: hoverPreviewUrl } = useScreenPreview(hoveredWindow, 1200, false);
+  const { previewUrl: hoverPreviewUrl } = useScreenPreview(hoveredWindow, 5, false);
 
   // Derive camera selection state for preview
   const selectedCameraId = selected.length === 1 && selected[0].type === "camera" ? String(selected[0].id) : null;

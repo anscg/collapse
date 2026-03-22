@@ -1,5 +1,4 @@
 import { useState, useEffect, useRef } from "react";
-import { invoke } from "../logger.js";
 import type { CaptureSource } from "./useNativeCapture.js";
 
 const sharedPreviewUrlCache = new Map<string, string>();
@@ -7,9 +6,12 @@ const previewListeners = new Map<string, Set<(url: string) => void>>();
 
 function setSharedPreviewUrl(key: string, url: string) {
   const oldUrl = sharedPreviewUrlCache.get(key);
-  if (oldUrl && oldUrl !== url) {
+  // Strictly manually free the old blob from memory to prevent memory leaks
+  // during high-framerate image swapping
+  if (oldUrl && oldUrl !== url && oldUrl.startsWith("blob:")) {
     URL.revokeObjectURL(oldUrl);
   }
+  
   sharedPreviewUrlCache.set(key, url);
   const subs = previewListeners.get(key);
   if (subs) {
@@ -17,20 +19,14 @@ function setSharedPreviewUrl(key: string, url: string) {
   }
 }
 
-interface PreviewResult {
-  base64: string;
-  width: number;
-  height: number;
-  size_bytes: number;
-}
-
 /**
- * Periodically captures a low-res preview screenshot from the given source.
- * Updates every `intervalMs` (default 2s). Returns an object URL for display.
+ * Periodically captures a high-res preview screenshot from the given source.
+ * Uses a Tauri custom protocol to completely bypass the JS bridge/Base64 overhead.
+ * Target 20fps but waits for the previous frame to load to prevent request pile-up.
  */
 export function useScreenPreview(
   source: CaptureSource | null,
-  intervalMs = 2000,
+  targetFps = 20,
   live = true,
 ) {
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
@@ -38,14 +34,11 @@ export function useScreenPreview(
   const sourceRef = useRef(source);
   sourceRef.current = source;
 
-  // Derive a stable key from the source for dependency tracking
   const sourceKey = source ? `${source.type}:${source.id}` : "";
 
-  // Subscribe to URL updates for this source key
   useEffect(() => {
     if (!sourceKey) return;
 
-    // Load initial cached value if available
     const cached = sharedPreviewUrlCache.get(sourceKey);
     if (cached) setPreviewUrl(cached);
 
@@ -71,55 +64,80 @@ export function useScreenPreview(
     }
 
     let cancelled = false;
-    console.debug(`[preview] starting preview for ${source.type} id=${source.id} every ${intervalMs}ms`);
+    let timerId: ReturnType<typeof setTimeout>;
+    
+    // Convert fps to ms interval, min 16ms (60fps)
+    const intervalMs = Math.max(16, Math.floor(1000 / targetFps));
 
-    const capture = async () => {
+    console.debug(`[preview] starting preview loop for ${source.type} id=${source.id} at ~${targetFps}fps`);
+
+    const loop = async () => {
+      if (cancelled) return;
+      
       const s = sourceRef.current;
-      if (!s || cancelled) return;
-      try {
-        const result = await invoke<PreviewResult>("take_screenshot", {
-          source: s,
-          maxWidth: 640,
-          maxHeight: 360,
-          jpegQuality: 50,
-        });
+      if (!s) return;
+      
+      const startTime = performance.now();
+      const scheduleNext = () => {
         if (cancelled) return;
-        const bytes = Uint8Array.from(atob(result.base64), (c) => c.charCodeAt(0));
-        const blob = new Blob([bytes], { type: "image/jpeg" });
-        const url = URL.createObjectURL(blob);
+        if (!live) return;
+        const elapsed = performance.now() - startTime;
+        const delay = Math.max(0, intervalMs - elapsed);
+        timerId = setTimeout(loop, delay);
+      };
+
+      try {
+        const url = `collapse-preview://localhost/${s.type}/${s.id}?maxWidth=854&maxHeight=480&jpegQuality=65&t=${Date.now()}`;
         
-        setSharedPreviewUrl(sourceKey, url);
-        setError(null);
-        console.debug(`[preview] got preview ${result.width}x${result.height} (${result.size_bytes} bytes)`);
+        // Use fetch + blob to manually control memory allocation.
+        // Directly assigning URL to img.src can cause DOM rendering cache memory leaks
+        // in WebKit at high framerates.
+        const res = await fetch(url);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        
+        const blob = await res.blob();
+        if (cancelled) return;
+
+        const objectUrl = URL.createObjectURL(blob);
+        
+        // Preload image to avoid blinking, then swap
+        const img = new Image();
+        img.onload = () => {
+          if (!cancelled) {
+            setSharedPreviewUrl(sourceKey, objectUrl);
+            setError(null);
+          } else {
+            URL.revokeObjectURL(objectUrl);
+          }
+          scheduleNext();
+        };
+        
+        img.onerror = () => {
+          URL.revokeObjectURL(objectUrl);
+          if (!cancelled) setError("Failed to decode preview");
+          scheduleNext();
+        };
+        
+        img.src = objectUrl;
       } catch (err) {
         if (!cancelled) {
-          const msg = err instanceof Error ? err.message : String(err);
-          console.warn(`[preview] preview failed: ${msg}`);
-          setError(msg);
+          setError(err instanceof Error ? err.message : String(err));
         }
+        scheduleNext();
       }
     };
 
     const cached = sharedPreviewUrlCache.get(sourceKey);
     if (live || !cached) {
-      capture();
+      loop();
     }
-
-    if (!live) {
-      return () => {
-        cancelled = true;
-        console.debug("[preview] stopping preview");
-      };
-    }
-
-    const id = setInterval(capture, intervalMs);
 
     return () => {
       cancelled = true;
-      console.debug("[preview] stopping preview");
-      clearInterval(id);
+      clearTimeout(timerId);
+      console.debug("[preview] stopping preview loop");
     };
-  }, [sourceKey, intervalMs, live]);
+  }, [sourceKey, targetFps, live]);
 
   return { previewUrl, error };
 }

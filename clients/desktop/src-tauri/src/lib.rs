@@ -18,6 +18,7 @@ use std::sync::Mutex;
 #[cfg(target_os = "macos")]
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::http;
 use tauri_plugin_deep_link::DeepLinkExt;
 
 #[cfg(target_os = "macos")]
@@ -685,6 +686,77 @@ mod base64_engine {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .register_asynchronous_uri_scheme_protocol("collapse-preview", |_app_handle, request, responder| {
+            tauri::async_runtime::spawn_blocking(move || {
+                let uri = request.uri().to_string();
+                let parsed_url = match url::Url::parse(&uri) {
+                    Ok(u) => u,
+                    Err(_) => {
+                        responder.respond(http::Response::builder().status(400).body(Vec::new()).unwrap());
+                        return;
+                    }
+                };
+
+                let path = parsed_url.path().trim_start_matches('/');
+                let segments: Vec<&str> = path.split('/').collect();
+                if segments.len() != 2 {
+                    responder.respond(http::Response::builder().status(400).body(Vec::new()).unwrap());
+                    return;
+                }
+
+                let source_type = segments[0];
+                let source_id: u32 = match segments[1].parse() {
+                    Ok(id) => id,
+                    Err(_) => {
+                        responder.respond(http::Response::builder().status(400).body(Vec::new()).unwrap());
+                        return;
+                    }
+                };
+
+                let source = match source_type {
+                    "monitor" => crate::CaptureSource::Monitor { id: source_id },
+                    "window" => crate::CaptureSource::Window { id: source_id },
+                    _ => {
+                        responder.respond(http::Response::builder().status(400).body(Vec::new()).unwrap());
+                        return;
+                    }
+                };
+
+                let mut max_width = 854;
+                let mut max_height = 480;
+                let mut jpeg_quality = 85;
+
+                for (k, v) in parsed_url.query_pairs() {
+                    match k.as_ref() {
+                        "maxWidth" => max_width = v.parse().unwrap_or(max_width),
+                        "maxHeight" => max_height = v.parse().unwrap_or(max_height),
+                        "jpegQuality" => jpeg_quality = v.parse().unwrap_or(jpeg_quality),
+                        _ => {}
+                    }
+                }
+
+                match crate::capture::take_screenshot_raw(source, max_width, max_height, jpeg_quality) {
+                    Ok(res) => responder.respond(
+                        http::Response::builder()
+                            .header("Content-Type", "image/jpeg")
+                            .header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+                            .header("Access-Control-Allow-Origin", "*")
+                            .status(200)
+                            .body(res.data)
+                            .unwrap()
+                    ),
+                    Err(e) => {
+                        eprintln!("Preview capture failed: {}", e);
+                        responder.respond(
+                            http::Response::builder()
+                                .status(500)
+                                .body(e.into_bytes())
+                                .unwrap()
+                        );
+                    }
+                }
+            });
+        })
         // Single-instance MUST be first: on Windows/Linux, when a second
         // instance is launched (e.g. deep link click while app is running),
         // this detects it, forwards args to the running instance, and exits
