@@ -1,4 +1,5 @@
 mod capture;
+mod pipewire;
 mod screencast;
 
 #[cfg(target_os = "macos")]
@@ -41,6 +42,10 @@ const CAPTURABLE_WINDOW_CACHE_TTL: Duration = Duration::from_secs(15);
 pub struct AppState {
     pub config: Mutex<Option<SessionConfig>>,
     pub cold_start_urls: Mutex<Option<Vec<String>>>,
+    #[cfg(target_os = "linux")]
+    pub screencast_session: Mutex<Option<ashpd::desktop::screencast::ScreenCast>>,
+    #[cfg(target_os = "linux")]
+    pub pipewire_fd: Mutex<Option<std::os::fd::RawFd>>,
 }
 
 /// Central deep link handler. All deep link entry points (cold start, single
@@ -484,10 +489,10 @@ fn is_wayland() -> bool {
 }
 
 #[tauri::command]
-async fn request_screencast() -> Result<Vec<crate::screencast::StreamInfo>, String> {
+async fn request_screencast(#[allow(unused_variables)] state: State<'_, AppState>) -> Result<Vec<crate::screencast::StreamInfo>, String> {
     #[cfg(target_os = "linux")]
     {
-        crate::screencast::request_screencast().await
+        crate::screencast::request_screencast(state).await
     }
     #[cfg(not(target_os = "linux"))]
     {
@@ -517,8 +522,15 @@ fn take_screenshot(
     max_width: u32,
     max_height: u32,
     jpeg_quality: u8,
+    #[allow(unused_variables)] state: State<'_, AppState>,
 ) -> Result<CaptureResult, String> {
-    capture::take_screenshot(source, max_width, max_height, jpeg_quality)
+    #[allow(unused_mut, unused_assignments)]
+    let mut fd = None;
+    #[cfg(target_os = "linux")]
+    if let Ok(guard) = state.pipewire_fd.lock() {
+        fd = *guard;
+    }
+    capture::take_screenshot(source, max_width, max_height, jpeg_quality, fd)
 }
 
 /// Shared upload-and-confirm pipeline: get presigned URL, PUT to R2, POST
@@ -634,7 +646,7 @@ async fn capture_and_upload(
     max_width: u32,
     max_height: u32,
     jpeg_quality: u8,
-    state: State<'_, AppState>,
+    #[allow(unused_variables)] state: State<'_, AppState>,
     app: AppHandle,
 ) -> Result<CaptureUploadResult, String> {
     let config = {
@@ -646,7 +658,14 @@ async fn capture_and_upload(
 
     // Native screenshot
     let _ = app.emit("capture-progress", "capturing screen...");
-    let screenshot = capture::take_stitched_screenshots(&sources, max_width, max_height, jpeg_quality)?;
+    #[allow(unused_mut, unused_assignments)]
+    let mut fd = None;
+    #[cfg(target_os = "linux")]
+    if let Ok(guard) = state.pipewire_fd.lock() {
+        fd = *guard;
+    }
+
+    let screenshot = capture::take_stitched_screenshots(&sources, max_width, max_height, jpeg_quality, fd)?;
     let _ = app.emit(
         "capture-progress",
         format!(
@@ -757,7 +776,16 @@ pub fn run() {
                     }
                 }
 
-                match crate::capture::take_screenshot_raw(source, max_width, max_height, jpeg_quality) {
+                #[allow(unused_mut, unused_assignments)]
+                let mut fd = None;
+                #[cfg(target_os = "linux")]
+                if let Some(app_state) = _app_handle.try_state::<AppState>() {
+                    if let Ok(guard) = app_state.pipewire_fd.lock() {
+                        fd = *guard;
+                    }
+                }
+
+                match crate::capture::take_screenshot_raw(source, max_width, max_height, jpeg_quality, fd) {
                     Ok(res) => responder.respond(
                         http::Response::builder()
                             .header("Content-Type", "image/jpeg")
@@ -806,6 +834,10 @@ pub fn run() {
         .manage(AppState {
             config: Mutex::new(None),
             cold_start_urls: Mutex::new(None),
+            #[cfg(target_os = "linux")]
+            screencast_session: Mutex::new(None),
+            #[cfg(target_os = "linux")]
+            pipewire_fd: Mutex::new(None),
         })
         .invoke_handler(tauri::generate_handler![
             list_capture_sources,

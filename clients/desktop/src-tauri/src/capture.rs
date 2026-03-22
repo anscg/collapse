@@ -16,7 +16,10 @@ use objc2_core_graphics::{
     CGWindowListCopyWindowInfo, CGWindowListCreateImage, CGWindowListOption,
 };
 
-fn capture_to_dynamic_image(source: &CaptureSource) -> Result<DynamicImage, String> {
+fn capture_to_dynamic_image(
+    source: &CaptureSource,
+    #[allow(unused_variables)] pipewire_fd: Option<i32>,
+) -> Result<DynamicImage, String> {
     let img = match source {
         CaptureSource::Monitor { id } => {
             let monitor = Monitor::all()
@@ -47,10 +50,20 @@ fn capture_to_dynamic_image(source: &CaptureSource) -> Result<DynamicImage, Stri
             }
         }
         CaptureSource::PipeWire { node_id } => {
-            return Err(format!(
-                "PipeWire capture not yet implemented (node: {})",
-                node_id
-            ));
+            #[cfg(target_os = "linux")]
+            {
+                let fd = pipewire_fd.ok_or_else(|| {
+                    "PipeWire fd not provided. Did you request screencast first?".to_string()
+                })?;
+                return crate::pipewire::capture_pipewire_node(*node_id, fd);
+            }
+            #[cfg(not(target_os = "linux"))]
+            {
+                return Err(format!(
+                    "PipeWire capture not supported on this OS (node: {})",
+                    node_id
+                ));
+            }
         }
     };
 
@@ -85,8 +98,9 @@ pub fn take_screenshot_raw(
     max_width: u32,
     max_height: u32,
     jpeg_quality: u8,
+    pipewire_fd: Option<i32>,
 ) -> Result<RawCaptureResult, String> {
-    let mut dynamic = capture_to_dynamic_image(&source)?;
+    let mut dynamic = capture_to_dynamic_image(&source, pipewire_fd)?;
 
     if dynamic.width() <= 2 || dynamic.height() <= 2 {
         return Err("Source is minimized or invisible".to_string());
@@ -124,8 +138,9 @@ pub fn take_screenshot(
     max_width: u32,
     max_height: u32,
     jpeg_quality: u8,
+    pipewire_fd: Option<i32>,
 ) -> Result<CaptureResult, String> {
-    let raw = take_screenshot_raw(source, max_width, max_height, jpeg_quality)?;
+    let raw = take_screenshot_raw(source, max_width, max_height, jpeg_quality, pipewire_fd)?;
     let size_bytes = raw.data.len();
 
     use base64::Engine;
@@ -144,18 +159,25 @@ pub fn take_stitched_screenshots(
     max_width: u32,
     max_height: u32,
     jpeg_quality: u8,
+    pipewire_fd: Option<i32>,
 ) -> Result<CaptureResult, String> {
     if sources.is_empty() {
         return Err("No sources provided".to_string());
     }
 
     if sources.len() == 1 {
-        return take_screenshot(sources[0].clone(), max_width, max_height, jpeg_quality);
+        return take_screenshot(
+            sources[0].clone(),
+            max_width,
+            max_height,
+            jpeg_quality,
+            pipewire_fd,
+        );
     }
 
     let mut images = Vec::new();
     for source in sources {
-        if let Ok(img) = capture_to_dynamic_image(source) {
+        if let Ok(img) = capture_to_dynamic_image(source, pipewire_fd) {
             // Drop ghost artifacts from closed/minimized windows (OS sometimes returns 1x1 buffers)
             if img.width() > 2 && img.height() > 2 {
                 images.push(img);
