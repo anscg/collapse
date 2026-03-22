@@ -13,9 +13,23 @@ export interface UseGallery {
   refresh(): void;
 }
 
+interface CachedSession {
+  summary: SessionSummary;
+  thumbnailUrlFetchedAt: number;
+}
+const globalSessionsCache: Record<string, CachedSession> = {};
+
 export function useGallery({ apiBaseUrl, tokens }: UseGalleryOptions): UseGallery {
-  const [sessions, setSessions] = useState<SessionSummary[]>([]);
-  const [loading, setLoading] = useState(true);
+  const validTokens = tokens.filter((t) => /^[a-f0-9]{64}$/i.test(t));
+  
+  const initialSessions = validTokens
+    .map(t => globalSessionsCache[t]?.summary)
+    .filter((s): s is SessionSummary => s !== undefined);
+
+  const hasAllInCache = validTokens.length > 0 && initialSessions.length === validTokens.length;
+
+  const [sessions, setSessions] = useState<SessionSummary[]>(initialSessions);
+  const [loading, setLoading] = useState(!hasAllInCache && validTokens.length > 0);
   const [error, setError] = useState<string | null>(null);
   const [refreshCounter, setRefreshCounter] = useState(0);
 
@@ -33,7 +47,6 @@ export function useGallery({ apiBaseUrl, tokens }: UseGalleryOptions): UseGaller
     }
 
     // Only send valid hex tokens to avoid server-side validation errors
-    const validTokens = tokens.filter((t) => /^[a-f0-9]{64}$/i.test(t));
     if (validTokens.length === 0) {
       setSessions([]);
       setLoading(false);
@@ -41,7 +54,10 @@ export function useGallery({ apiBaseUrl, tokens }: UseGalleryOptions): UseGaller
     }
 
     let cancelled = false;
-    setLoading(true);
+    // Only show loading if we don't have cached data to prevent skeleton flash
+    if (!hasAllInCache) {
+      setLoading(true);
+    }
 
     fetch(`${apiBaseUrl}/api/sessions/batch`, {
       method: "POST",
@@ -57,7 +73,33 @@ export function useGallery({ apiBaseUrl, tokens }: UseGalleryOptions): UseGaller
       })
       .then((data: { sessions: SessionSummary[] }) => {
         if (!cancelled) {
-          setSessions(data.sessions ?? []);
+          const now = Date.now();
+          const THUMBNAIL_EXPIRY = 45 * 60 * 1000; // 45 mins
+          
+          const mergedSessions = (data.sessions ?? []).map(newSession => {
+            const cached = globalSessionsCache[newSession.token];
+            let thumbnailUrl = newSession.thumbnailUrl;
+            let fetchedAt = now;
+            
+            if (cached && cached.summary.thumbnailUrl) {
+              const isImageSame = newSession.screenshotCount === cached.summary.screenshotCount;
+              const isFresh = now - cached.thumbnailUrlFetchedAt < THUMBNAIL_EXPIRY;
+              
+              if (isImageSame && isFresh) {
+                thumbnailUrl = cached.summary.thumbnailUrl;
+                fetchedAt = cached.thumbnailUrlFetchedAt;
+              }
+            }
+            
+            const resultSession = { ...newSession, thumbnailUrl };
+            globalSessionsCache[newSession.token] = {
+              summary: resultSession,
+              thumbnailUrlFetchedAt: fetchedAt
+            };
+            return resultSession;
+          });
+          
+          setSessions(mergedSessions);
           setError(null);
         }
       })
@@ -75,7 +117,7 @@ export function useGallery({ apiBaseUrl, tokens }: UseGalleryOptions): UseGaller
     return () => {
       cancelled = true;
     };
-  }, [apiBaseUrl, tokensKey, refreshCounter]);
+  }, [apiBaseUrl, tokensKey, refreshCounter, hasAllInCache]);
 
   // Re-fetch on tab focus
   useEffect(() => {
