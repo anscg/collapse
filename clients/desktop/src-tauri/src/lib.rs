@@ -732,7 +732,9 @@ mod base64_engine {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .register_asynchronous_uri_scheme_protocol("collapse-preview", |_app_handle, request, responder| {
+        .register_asynchronous_uri_scheme_protocol("collapse-preview", |app_handle, request, responder| {
+            #[allow(unused_variables)]
+            let app_handle = app_handle.app_handle().clone();
             tauri::async_runtime::spawn_blocking(move || {
                 let uri = request.uri().to_string();
                 let parsed_url = match url::Url::parse(&uri) {
@@ -785,7 +787,7 @@ pub fn run() {
                 #[allow(unused_mut, unused_assignments)]
                 let mut fd = None;
                 #[cfg(target_os = "linux")]
-                if let Some(app_state) = _app_handle.app_handle().try_state::<AppState>() {
+                if let Some(app_state) = app_handle.try_state::<AppState>() {
                     if let Ok(guard) = app_state.pipewire_fd.lock() {
                         fd = *guard;
                     }
