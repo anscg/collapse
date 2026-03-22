@@ -36,7 +36,7 @@ const r2Client = new S3Client({
   responseChecksumValidation: "WHEN_REQUIRED",
 });
 
-const R2_BUCKET = process.env.R2_BUCKET_NAME || "collapse";
+const R2_BUCKET = process.env.R2_BUCKET_NAME || "lookout";
 const R2_PUBLIC_DOMAIN = process.env.R2_PUBLIC_DOMAIN || "";
 
 const UUID_RE =

@@ -13,7 +13,7 @@ import {
   MAX_SCREENSHOT_BYTES,
   MAX_SCREENSHOTS_PER_SESSION,
   MAX_UPLOAD_REQUESTS_PER_SESSION,
-} from "@collapse/shared";
+} from "@lookout/shared";
 
 // ── Shared schema fragments ─────────────────────────────────
 

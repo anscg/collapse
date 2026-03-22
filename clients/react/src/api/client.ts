@@ -9,10 +9,10 @@ import type {
   RenameSessionResponse,
   StatusResponse,
   VideoResponse,
-} from "@collapse/shared";
+} from "@lookout/shared";
 import type { TokenProvider } from "../types.js";
 
-export interface CollapseClient {
+export interface LookoutClient {
   resolveToken(): Promise<string>;
   getSession(): Promise<SessionResponse>;
   getUploadUrl(): Promise<UploadUrlResponse>;
@@ -77,7 +77,7 @@ async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-export function createCollapseClient(options: CreateClientOptions): CollapseClient {
+export function createLookoutClient(options: CreateClientOptions): LookoutClient {
   const { baseUrl, token } = options;
 
   const resolveToken = () => resolveTokenValue(token);

@@ -12,7 +12,7 @@ import {
   AUTO_STOP_AFTER_MINUTES,
   UNCONFIRMED_CLEANUP_AFTER_MINUTES,
   STUCK_COMPILING_TIMEOUT_MINUTES,
-} from "@collapse/shared";
+} from "@lookout/shared";
 
 /**
  * Register periodic jobs with pgBoss.

@@ -8,7 +8,7 @@ import type {
   StopResponse,
   StatusResponse,
   VideoResponse,
-} from "@collapse/shared";
+} from "@lookout/shared";
 
 export class HttpError extends Error {
   status: number;

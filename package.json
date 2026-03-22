@@ -1,5 +1,5 @@
 {
-  "name": "collapse",
+  "name": "lookout",
   "private": true,
   "workspaces": [
     "packages/shared",

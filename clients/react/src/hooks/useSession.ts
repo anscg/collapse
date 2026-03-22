@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { useCollapseContext } from "../CollapseProvider.js";
+import { useLookoutContext } from "../LookoutProvider.js";
 import { HttpError } from "../api/client.js";
 import type { RecorderStatus } from "../types.js";
 
@@ -15,7 +15,7 @@ interface SessionState {
 }
 
 export function useSession() {
-  const { client, config } = useCollapseContext();
+  const { client, config } = useLookoutContext();
   const pollIntervalMs = config.statusPollIntervalMs;
 
   const [state, setState] = useState<SessionState>({
