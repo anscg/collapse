@@ -26,6 +26,15 @@ export interface CollapseClient {
   getVideo(options?: { format?: "mp4" | "webm" }): Promise<VideoResponse>;
 }
 
+export class HttpError extends Error {
+  status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = "HttpError";
+    this.status = status;
+  }
+}
+
 export interface CreateClientOptions {
   baseUrl: string;
   token: TokenProvider;
@@ -60,7 +69,8 @@ async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
     } catch {
       detail = text;
     }
-    throw new Error(
+    throw new HttpError(
+      res.status,
       `HTTP ${res.status} ${res.statusText} from ${url}${detail ? "\n" + detail.slice(0, 500) : ""}`,
     );
   }
